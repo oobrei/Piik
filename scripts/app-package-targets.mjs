@@ -111,3 +111,11 @@ export function goBuildEnvironment(target) {
     CGO_ENABLED: target.cgo ? "1" : "0",
   };
 }
+
+// The App is a windowed application: Windows must not allocate a console for it.
+// A GUI-subsystem binary still inherits redirected stdout and stderr, so the
+// packaging smoke keeps reading its readiness lines, and a terminal that starts
+// the App explicitly still gets its output.
+export function goLinkFlags(target, flags) {
+  return target.goos === "windows" ? `${flags} -H windowsgui` : flags;
+}

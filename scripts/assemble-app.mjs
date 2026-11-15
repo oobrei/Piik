@@ -21,7 +21,7 @@ import {
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { appPackageTarget, appPackageDirectory, goBuildEnvironment, CLOUDFLARED_VERSION } from "./app-package-targets.mjs";
+import { appPackageTarget, appPackageDirectory, goBuildEnvironment, goLinkFlags, CLOUDFLARED_VERSION } from "./app-package-targets.mjs";
 import { writeAppPlatformAssets } from "./app-icons.mjs";
 import { writeAppLicenseNotices } from "./package-licenses.mjs";
 import { tarExecutable } from "./archive-tool.mjs";
@@ -257,7 +257,7 @@ try {
     "build",
     "-trimpath",
     "-ldflags",
-    `-s -w -X github.com/TNTcraftHIM/Piik/internal/app/buildinfo.Revision=${revision} -X github.com/TNTcraftHIM/Piik/internal/app/buildinfo.Release=${version}`,
+    goLinkFlags(target, `-s -w -X github.com/TNTcraftHIM/Piik/internal/app/buildinfo.Revision=${revision} -X github.com/TNTcraftHIM/Piik/internal/app/buildinfo.Release=${version}`),
     "-o",
     appPath,
     "./cmd/piik-app",
