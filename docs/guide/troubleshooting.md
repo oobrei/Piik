@@ -36,8 +36,8 @@ symptom's simple checks have failed. Change one thing at a time.
 
 ### App startup fails, or no page opens
 
-1. Read the reason on the launch page and in the terminal. If the App is still
-   running, copy its displayed address into your browser.
+1. Read the reason on the launch page in the App window. If the App is still
+   running, its window shows the launcher again so you can retry.
 2. If Local mode lists several addresses, choose the adapter and IP that friends
    can reach. See [Local invitation checks](#local-invitation-will-not-open).
 3. If startup still fails, retry with **Debug launch** enabled and save the complete
@@ -161,7 +161,7 @@ therefore shows a certificate warning before opening the invitation.
 
 1. Check that the address is the one the Host intended to share.
 2. Open the warning's certificate details and compare its **SHA-256 fingerprint**
-   with **Local certificate · SHA-256** in the Host's App terminal, or the
+   with **Local certificate · SHA-256** in the Host's App window, or the
    Server's **HTTPS certificate** startup message. Ask the Host over your usual
    trusted chat if you are on another device.
 3. If it matches, use the browser's **Advanced → Continue** option where available.
@@ -536,8 +536,8 @@ Enable diagnostics before reproducing once, then export before refreshing:
 - **Web:** use the page's diagnostics button. A sharing failure's error icon below
   the TV also provides a copyable summary; it contains the Web version, message
   and code, without invitation links or source names.
-- **Desktop App capture or remote control:** also enable **Debug launch** on the Host App's mode selection page,
-  then press `D` in the terminal to export its report.
+- **Desktop App capture or remote control:** also enable **Debug launch** on the Host App's mode selection page.
+  The App writes its report at orderly shutdown and reveals the ZIP in the file manager.
 - **Connection failure:** collect the affected Viewer and Host reports for the
   same attempt. For self-hosted SFU, include the Server report too.
 

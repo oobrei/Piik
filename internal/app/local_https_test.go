@@ -44,7 +44,7 @@ func TestLocalHTTPSAndLoopbackShareRoomAuthority(t *testing.T) {
 	ready, done := make(chan string, 1), make(chan error, 1)
 	go func() {
 		done <- runLocal(ctx, Options{Local: true, Port: port, LANAddress: addresses[0],
-			DisableBrowser: true, console: newConsole(cancel, true),
+			DisableBrowser: true, machine: true, surface: headlessSurface{},
 			Ready: func(target string) { ready <- target },
 		}, appconfig.Config{LocalAccessPassword: "test local passphrase"}, control)
 	}()
@@ -183,7 +183,7 @@ func TestLocalPortCollisionReleasesTheOtherEntry(t *testing.T) {
 				_ = reservation.Close()
 			}
 			err = runLocal(t.Context(), Options{Local: true, Port: port, LANAddress: addresses[0],
-				DisableBrowser: true, console: newConsole(func() {}, true),
+				DisableBrowser: true, machine: true, surface: headlessSurface{},
 				Ready: func(string) { t.Error("occupied Local service reported readiness") },
 			}, appconfig.Config{}, control)
 			if !errors.Is(err, failure.LocalPort) {

@@ -38,7 +38,7 @@
 | 欢迎语、等待短句、浏览器标签页的轮换标题 | 同一语言文件中的 `zhPlayful` / `enPlayful` 及标题词库；官网欢迎语共用这些词库 |
 | 官网 | [页面正文](../../site/index.html)和[交互文案](../../site/main.js)，按 `en`、`zh-CN` 成对组织 |
 | 宣传短片 | [短片源码说明](../../site/film/README.md)，字幕、插画和播放控件有各自的中英文内容 |
-| App 终端 | [console.go](../../internal/app/console.go) 中的 `consoleCopy`，每项按英文、中文、纯视觉排列；第三项即使为空也需保留 |
+| App 窗口 | 与网页界面共用启动页和房间词库；窗口显示 App 自己的页面，不另设文案。启动失败对话框使用 [surface.go](../../internal/app/surface.go) |
 | README 与读者文档 | [README](../../README.md)、[文档首页](./README.md)、[使用指南](./getting-started.md)、[问题排查](./troubleshooting.md)、[部署指南](../operations/self-hosting.md)，均有对应的 `.zh-CN.md` 文件 |
 
 修改源码后，重新构建提供该内容的页面或程序：
@@ -97,9 +97,9 @@ App 启动错误需同时翻译网页与终端的说明，保留共用的原因�
    `tag` 使用对应语言标签；同时提供地区或文字变体时，简称应能区分。
    中英文保留快捷入口，额外语言与纯视觉模式共同显示在第三个控件的下拉菜单中。
    按[系统语言规则](../standards/presentation-lifecycle.md#visual-language)检查初始选择、偏好保存与 App 跳转。
-3. 检查完整界面与启动流程。新增的界面语言在 App 终端中暂用英文；
-   翻译终端时，还需同步启动服务和 loopback 对语言的校验，相关位置见
-   [App 模块地图](../standards/engineering.md#module-map)。
+3. 检查完整界面与启动流程。App 窗口显示与网页界面相同的词库，因此新增语言随界面词库生效；
+   其失败对话框在翻译前暂用英文，翻译时还需同步启动服务和 loopback 对语言的校验，
+   相关位置见 [App 模块地图](../standards/engineering.md#module-map)。
 4. 在 PR 中写清覆盖范围。官网、短片和文档可以分别翻译，新增语言时需同步各自的语言切换入口。
    从右向左书写的语言还需实现并检查文字方向与布局。
 

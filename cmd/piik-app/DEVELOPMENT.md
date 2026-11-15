@@ -3,6 +3,29 @@
 Build, package and verify Piik App from the repository root. For installation,
 mode selection and diagnostics, use the [App guide](./README.md).
 
+## The mygo Window
+
+Piik App is a [mygo](https://mygo.egoist.dev) application. `mygo.config.ts` at
+the repository root describes it: the app identity, the macOS usage
+descriptions and the output directory. The window is the App's desktop surface
+and shows the App's own loopback pages; [internal/app/window](../../internal/app/window/window.go)
+owns it, and [internal/app/surface.go](../../internal/app/surface.go) is the
+seam between the App's lifecycle and whatever presents it.
+
+The window deliberately keeps the page on its loopback HTTP origin rather than
+serving it from a `mygo://` scheme: `/api` and `/signal` are same-origin
+requests, the site-access cookie is origin-scoped, and
+[src/client/native/client.ts](../../src/client/native/client.ts) treats a
+loopback hostname as "native App available". The App therefore embeds and
+serves its own frontend through
+[internal/server/webassets](../../internal/server/webassets/assets.go), and
+`mygo.config.ts` sets no frontend, so mygo embeds none of its own.
+
+Approved external Sites and Viewer invitations keep the system Browser. The
+window hands those addresses to the platform URL handler, and `window.open` from
+an App page leaves for the same place, so the launcher's approval page and the
+guide open where they always did.
+
 ## Run From Source
 
 Use the Node/npm/Go versions in [Run from source](../../docs/README.md#run-from-source).

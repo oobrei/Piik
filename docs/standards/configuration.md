@@ -128,7 +128,7 @@ configuration. No settings panel or additional media transport is involved.
 LAN mode retains the Host's HTTP loopback entry and serves HTTPS on the selected
 LAN IPv4 address at the same TCP port. Both listeners share one HTTP server,
 room authority and shutdown owner. Its self-signed certificate and private key
-live only in memory for that run; the App terminal displays the SHA-256
+live only in memory for that run; the App window shows the SHA-256
 fingerprint for manual confirmation. No CA is installed and no TLS files are saved.
 The selected LAN address also runs the existing Binding-only STUN service on
 the App's numeric UDP port (default `8787`). This lets Browsers
@@ -199,7 +199,7 @@ Diagnostics are local and opt-in. Enable them **before** reproducing the problem
 
 | Surface | Enable | Export |
 | --- | --- | --- |
-| App | Enable **Debug launch** with the small chip icon after the theme control in the mode selector, or start with `--debug` / `PIIK_DEBUG=client` | Press `D` in the terminal for a ZIP |
+| App | Enable **Debug launch** with the small chip icon after the theme control in the mode selector, or start with `--debug` / `PIIK_DEBUG=client` | Written at orderly shutdown and revealed in the file manager; the path is also printed to the terminal |
 | Browser Host/Viewer | Open **Help → Debug** after the theme control and confirm the reload, or add `?debug=1` before any invitation fragment | **Help → Web report** downloads the browser report |
 | Hosted Server | Start with `--debug`, `PIIK_DEBUG=server` or `PIIK_DEBUG=route` | On Unix, `kill -USR1 <pid>`; also exported at orderly shutdown |
 
@@ -229,13 +229,13 @@ either report does not stop an active share or upload anything. Browser export
 also remains available as `await window.__PIIK_DEBUG__.export()` in DevTools.
 
 App logs go to `logs` beside the executable, falling back to `Piik/logs`
-in the OS user-cache directory when that default is unwritable. The TUI shows
-the actual path and the exported ZIP. `--log-dir` overrides
+in the OS user-cache directory when that default is unwritable. The App prints
+the actual path and reveals the exported ZIP. `--log-dir` overrides
 `PIIK_LOG_DIR`; an explicit directory must be writable. Choosing a
-directory alone does not enable collection. Non-interactive Apps export at
-orderly shutdown; a returned App error also exports before the terminal closes.
-On App, `PIIK_DEBUG=route` alone retains console route
-tracing; use `--debug` for file collection and the `D` action.
+directory alone does not enable collection. Every App exports at orderly
+shutdown; a returned App error also exports before it exits.
+On App, `PIIK_DEBUG=route` alone retains route
+tracing; use `--debug` for file collection.
 
 Hosted logs use `PIIK_LOG_DIR`, otherwise systemd `LOGS_DIRECTORY`,
 otherwise `logs` under the working directory. The service unit supplies

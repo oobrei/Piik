@@ -22,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"github.com/TNTcraftHIM/Piik/internal/app/buildinfo"
 	appconfig "github.com/TNTcraftHIM/Piik/internal/app/config"
 	"github.com/TNTcraftHIM/Piik/internal/app/lan"
@@ -205,12 +204,11 @@ func TestLauncherRetainsItsRuntimeFailureDuringCancellation(t *testing.T) {
 			defer slog.SetDefault(previous)
 			defer resume()
 			opened := make(chan string, 1)
-			console := newConsole(cancel, true)
-			console.openURL = func(target string) error { opened <- target; return nil }
+			surface := &testSurface{open: func(target string) { opened <- target }}
 			done := make(chan error, 1)
 			joined := false
 			go func() {
-				done <- runLauncher(ctx, Options{Port: listener.Addr().(*net.TCPAddr).Port, console: console},
+				done <- runLauncher(ctx, Options{Port: listener.Addr().(*net.TCPAddr).Port, surface: surface},
 					configPath, config, control, func(*Options, appconfig.Config) error { return nil })
 			}()
 			defer func() {
@@ -342,11 +340,16 @@ func TestLauncherRetriesARetiredFailureWithoutReplacingAReadyRoom(t *testing.T) 
 	}
 	config.SetApprovedSites([]string{"https://site.example"})
 	opened := make(chan string, 1)
-	console := newConsole(cancel, true)
-	console.openURL = func(target string) error { opened <- target; return nil }
+	// Only the first page matters here; later opens must not block the App.
+	surface := &testSurface{open: func(target string) {
+		select {
+		case opened <- target:
+		default:
+		}
+	}}
 	done := make(chan error, 1)
 	go func() {
-		done <- runLauncher(ctx, Options{Port: port, console: console, TunnelProcess: executable},
+		done <- runLauncher(ctx, Options{Port: port, surface: surface, TunnelProcess: executable},
 			configPath, config, control, func(*Options, appconfig.Config) error { return nil })
 	}()
 	t.Cleanup(func() {
@@ -403,7 +406,7 @@ func TestLauncherRetriesARetiredFailureWithoutReplacingAReadyRoom(t *testing.T) 
 	}
 }
 
-func TestHungBrowserHandoffDoesNotBlockLauncherOrSiteExit(t *testing.T) {
+func TestHungWindowOpenDoesNotBlockLauncherOrSiteExit(t *testing.T) {
 	t.Setenv("TERM", "dumb")
 	for _, mode := range []string{"launcher", "site", "starred-site", "starred-second-site", "revoked-site"} {
 		t.Run(mode, func(t *testing.T) {
@@ -414,11 +417,22 @@ func TestHungBrowserHandoffDoesNotBlockLauncherOrSiteExit(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer control.Close()
-			console := newConsole(cancel, false)
 			started, release := make(chan struct{}, 10), make(chan struct{})
-			defer close(release)
-			console.openURL = func(string) error { started <- struct{}{}; <-release; return errors.New("late browser result") }
-			options := Options{Port: 8787, console: console}
+			defer func() {
+				// A subtest that failed early still releases the pending load.
+				defer func() { _ = recover() }()
+				close(release)
+			}()
+			// A window that never finishes loading still cannot hold the App:
+			// the launcher and the Site entry own their own lifecycle.
+			surface := &testSurface{open: func(string) {
+				select {
+				case started <- struct{}{}:
+				default:
+				}
+				<-release
+			}}
+			options := Options{Port: 8787, surface: surface}
 			configPath := filepath.Join(t.TempDir(), "client.json")
 			config, err := appconfig.LoadOrCreate(configPath)
 			if err != nil {
@@ -453,17 +467,18 @@ func TestHungBrowserHandoffDoesNotBlockLauncherOrSiteExit(t *testing.T) {
 			case <-time.After(time.Second):
 				t.Fatal("browser handoff was not started")
 			}
-			console.mu.Lock()
-			model := console.plain
-			console.mu.Unlock()
-			if model.view.entry == "" {
-				t.Fatal("manual entry was not available while browser opening hung")
+			entry := surface.last()
+			surface.mu.Lock()
+			launcherAddress := surface.launcher
+			surface.mu.Unlock()
+			if entry == "" {
+				t.Fatal("manual entry was not available while the window open hung")
 			}
 			if mode == "site" || mode == "starred-site" || mode == "starred-second-site" {
-				if model.view.entry != launcher.EntryURL("https://share.example", control.Endpoint().Port) {
-					t.Fatalf("App did not open the selected Site: %s", model.view.entry)
+				if entry != launcher.EntryURL("https://share.example", control.Endpoint().Port) {
+					t.Fatalf("App did not open the selected Site: %s", entry)
 				}
-				response, err := http.Get(strings.TrimSuffix(model.launcher, "/client") + "/api/client-launcher")
+				response, err := http.Get(strings.TrimSuffix(launcherAddress, "/client") + "/api/client-launcher")
 				if err != nil {
 					t.Fatalf("launcher management is unavailable: %v", err)
 				}
@@ -477,30 +492,22 @@ func TestHungBrowserHandoffDoesNotBlockLauncherOrSiteExit(t *testing.T) {
 				if response.StatusCode != http.StatusOK {
 					t.Fatal("Site entry lost access to the launcher")
 				}
-			} else if !strings.HasSuffix(model.view.entry, "/client") {
-				t.Fatalf("App did not preserve launcher entry: %s", model.view.entry)
+			} else if !strings.HasSuffix(entry, "/client") {
+				t.Fatalf("App did not preserve launcher entry: %s", entry)
 			}
-			for range 5 {
-				_, command := model.Update(tea.KeyPressMsg{Code: 'o'})
-				if command != nil {
-					command()
-				}
-			}
-			select {
-			case <-started:
-				t.Fatal("repeated open queued another hung handler")
-			case <-time.After(50 * time.Millisecond):
-			}
-			model.Update(tea.KeyPressMsg{Code: 'q'})
+			// Closing the window stops the App even while a load is pending.
+			// The pending load is released here; the App must not wait for it.
+			cancel()
+			close(release)
 			select {
 			case err := <-done:
 				if err != nil {
 					t.Fatal(err)
 				}
 			case <-time.After(time.Second):
-				t.Fatal("App exit waited for the browser handler")
+				t.Fatal("App exit waited for the window handler")
 			}
-			console.finish(nil, "")
+			surface.Finish(nil, "")
 		})
 	}
 }
@@ -519,8 +526,8 @@ func TestBrowserOpenFailureKeepsTheAppAvailable(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer control.Close()
-			console := newConsole(cancel, false)
-			options := Options{Port: 8787, console: console}
+			surface := &testSurface{}
+			options := Options{Port: 8787, surface: surface}
 			configPath := filepath.Join(t.TempDir(), "client.json")
 			config, err := appconfig.LoadOrCreate(configPath)
 			if err != nil {
@@ -548,24 +555,13 @@ func TestBrowserOpenFailureKeepsTheAppAvailable(t *testing.T) {
 					t.Error("App did not stop after cancellation")
 				}
 			})
-			var view consoleView
-			deadline := time.After(3 * time.Second)
-			for view.browserError == nil {
-				console.mu.Lock()
-				view = console.plain.view
-				console.mu.Unlock()
-				select {
-				case <-deadline:
-					t.Fatal("browser failure was not reported")
-				case <-time.After(10 * time.Millisecond):
-				}
-			}
-			if view.entry == "" || view.state != "setup" && view.state != "ready" {
-				t.Fatalf("unusable App after browser failure: %+v", view)
+			entry := surface.waitFor(t, func(string) bool { return true })
+			if entry == "" {
+				t.Fatal("App did not show a page after a failed window open")
 			}
 			if mode == "launcher" {
 				client := &http.Client{Timeout: 3 * time.Second}
-				origin := strings.TrimSuffix(view.entry, "/client")
+				origin := strings.TrimSuffix(entry, "/client")
 
 				response, err := postLocalLauncher(client, origin+"/api/client-launcher/site", "application/json",
 					strings.NewReader(`{"site":"https://share.example","allowed":true}`))
@@ -668,11 +664,10 @@ func TestOwnedStartupUsesFreshInvitation(t *testing.T) {
 			t.Fatal(err)
 		}
 		opened := make(chan string, 4)
-		console := newConsole(cancel, true)
-		console.openURL = func(target string) error { opened <- target; return nil }
+		surface := &testSurface{open: func(target string) { opened <- target }}
 		done := make(chan error, 1)
 		go func() {
-			done <- runLauncher(ctx, Options{Port: port, console: console, TunnelProcess: executable}, path, config, control, func(*Options, appconfig.Config) error { return nil })
+			done <- runLauncher(ctx, Options{Port: port, surface: surface, TunnelProcess: executable}, path, config, control, func(*Options, appconfig.Config) error { return nil })
 		}()
 		var entry string
 		select {
@@ -752,7 +747,7 @@ func TestOwnedStartupUsesFreshInvitation(t *testing.T) {
 			t.Fatal("App did not retire")
 		}
 		control.Close()
-		console.finish(nil, "")
+		surface.Finish(nil, "")
 	}
 }
 
@@ -764,7 +759,7 @@ func TestOccupiedPortRejectsLinkBeforeStartingATunnel(t *testing.T) {
 	defer listener.Close()
 	err = runLocal(t.Context(), Options{
 		Link: true, Port: listener.Addr().(*net.TCPAddr).Port,
-		TunnelProcess: "missing-tunnel-process", console: &console{machine: true},
+		TunnelProcess: "missing-tunnel-process", surface: headlessSurface{}, machine: true,
 	}, appconfig.Config{}, nil)
 	var bindError *net.OpError
 	if !errors.As(err, &bindError) || bindError.Op != "listen" {
@@ -782,7 +777,7 @@ func TestLocalLaunchRevalidatesTheChosenLANAddress(t *testing.T) {
 		t.Skip("documentation address is configured on this test machine")
 	}
 	err = runLocal(t.Context(), Options{
-		Local: true, LANAddress: inactive, console: &console{machine: true},
+		Local: true, LANAddress: inactive, surface: headlessSurface{}, machine: true,
 	}, appconfig.Config{}, nil)
 	if err == nil || !strings.Contains(err.Error(), "selected LAN address is not active") {
 		t.Fatalf("Local launch accepted an unavailable invitation address: %v", err)

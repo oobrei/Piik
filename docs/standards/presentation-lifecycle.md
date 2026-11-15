@@ -58,7 +58,8 @@ Closing the window returns it to the page; room retirement or opener teardown
 closes it, including a late asynchronous open. Browser window support does not
 promise game-overlay transparency, click-through or exclusive-fullscreen coverage.
 
-Desktop Piik App opens this same application in the system Browser. Its startup surface
+Desktop Piik App shows this same application in its own window, a mygo window
+that hosts the App's loopback pages. Its startup surface
 offers Local and temporary public invitation; the running App is already
 available to its approved Sites before either mode starts. Browser pages share
 one App entry across platforms; discovery and authorized health determine its
@@ -111,10 +112,13 @@ current native request while the user enters App and returns to the browser.
 App returns after the requested capture preparation completes, including source
 audio; video readiness alone does not complete that operation.
 
-Opening the system Browser is an asynchronous convenience action. One pending
-OS handoff is allowed; a slow or failed handler cannot block readiness or App
-exit. The console retains the entry address and reports the underlying error.
-The App does not terminate the user's browser to enforce a handoff deadline.
+The window shows only the App's own loopback pages. Approved external Sites and
+Viewer invitations keep the system Browser, which remains the Viewer surface;
+the App hands those addresses to the platform's URL handler. Opening the system
+Browser is an asynchronous convenience action: one pending OS handoff is
+allowed, and a slow or failed handler cannot block readiness or App exit. The
+App does not terminate the user's browser to enforce a handoff deadline.
+Closing the window ends the App and its Local room service.
 
 Server and App share one control layout and vocabulary. Deployment capabilities
 may fix a control on or off, but do not remove its place in the interface;
@@ -182,8 +186,9 @@ persisted and takes precedence over that default, including App launch handoff.
 Explicit launcher choices apply only to the presentation domains the user chose.
 Older launchers cannot distinguish defaults from explicit choices; updated Sites
 preserve their saved preferences when receiving those unmarked hints.
-The App console uses its own supported presentation languages and falls back
-to English for additional UI languages. Text modes use concise copy.
+The App window shows the same presentation languages as the page it hosts; the
+page reports its choice to the App's loopback service, which falls back to
+English for additional UI languages.
 
 The [visual language](./visual-language.md) is the single owner of
 illustrative roles and objects, semantic colour, panel grammar, motion,

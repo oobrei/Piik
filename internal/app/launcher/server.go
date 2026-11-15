@@ -88,6 +88,7 @@ type Server struct {
 	saveStartupSite     func(StartupIntent) error
 	enableDebug         func() error
 	selection           chan Selection
+	navigation          chan string
 	done                chan error
 	ready               chan struct{}
 
@@ -147,6 +148,7 @@ func Start(parent context.Context, assets fs.FS, options Options) (*Server, erro
 		saveStartupSite:     options.SaveStartupSite,
 		enableDebug:         options.EnableDebug,
 		selection:           make(chan Selection, 1),
+		navigation:          make(chan string, 1),
 		done:                make(chan error, 1),
 		ready:               make(chan struct{}),
 	}
@@ -186,6 +188,13 @@ func (server *Server) EntryURL() string {
 
 func (server *Server) Selection() <-chan Selection {
 	return server.selection
+}
+
+// Navigation reports the App-owned page a started room wants shown, so a
+// desktop window can follow it. The launcher page navigates itself only for
+// addresses it does not own; this channel carries the loopback ones.
+func (server *Server) Navigation() <-chan string {
+	return server.navigation
 }
 
 func (server *Server) Done() <-chan error {
@@ -511,7 +520,32 @@ func (server *Server) handleLaunch(response http.ResponseWriter, request *http.R
 		})
 		return
 	}
+	server.navigate(target)
 	writeJSON(response, http.StatusOK, map[string]string{"target": target})
+}
+
+// navigate offers target to the App's window without ever blocking the page
+// request: a window that is not listening yet keeps the launcher page, which
+// reads the same target from its state.
+func (server *Server) navigate(target string) {
+	if !ownedTarget(target) {
+		return
+	}
+	select {
+	case server.navigation <- target:
+	default:
+	}
+}
+
+// ownedTarget reports whether target is one of the App's own loopback pages.
+// Anything else belongs to the system browser.
+func ownedTarget(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return false
+	}
+	host := parsed.Hostname()
+	return host == "127.0.0.1" || host == "localhost" || host == "::1"
 }
 
 func errorDetail(err error) string {

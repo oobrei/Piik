@@ -8,13 +8,10 @@ replace github.com/netbirdio/go-nat => ./internal/thirdparty/go-nat
 replace github.com/jackpal/go-nat-pmp => ./internal/thirdparty/go-nat-pmp
 
 require (
-	charm.land/bubbletea/v2 v2.0.9
-	charm.land/lipgloss/v2 v2.0.6
 	github.com/bluenviron/mediacommon/v2 v2.9.5
-	github.com/charmbracelet/colorprofile v0.4.3
-	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/coder/websocket v1.8.15
+	github.com/egoist/mygo v0.9.1
 	github.com/go-logr/logr v1.4.4
 	github.com/klauspost/compress v1.20.4
 	github.com/livekit/livekit-server v1.13.11-0.20261016133420-cde3991916cf
@@ -64,6 +61,7 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/dennwc/iters v1.2.2 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/ebitengine/purego v0.11.1 // indirect
 	github.com/elliotchance/orderedmap/v3 v3.1.1 // indirect
 	github.com/florianl/go-tc v0.4.8 // indirect
 	github.com/frostbyte73/core v0.1.1 // indirect

@@ -686,11 +686,11 @@ Unselected hover uses `--control-hover`. Subtle surface highlights
 and shadows add depth without changing control geometry or press feedback.
 Gold upholstery, illustration and badge artwork retain their own palettes.
 
-The App terminal keeps its user's terminal background and palette. A compact
-mascot/title block identifies the App and build; state, addresses and available
-shortcut keys form separate reading levels. Use terminal-theme blue for links
-and actions, neutral rules, and the same success/wait/failure colour meanings.
-Preserve monochrome output and compact layouts without changing their behavior.
+The App window shows the shared web interface, so its launcher and room pages
+follow the same cast, semantic colours, panels and motion as the Browser
+surface. The window adds no scene-local styling of its own: it frames the page
+with the platform's own window chrome and the shared background colour, which
+avoids a flash of another colour before the first paint.
 
 Use the semantic theme tokens in `src/client/ui/palette.css`. Status colours
 keep their meaning independently of control selection and focus. The shared

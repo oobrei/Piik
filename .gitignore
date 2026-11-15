@@ -20,6 +20,9 @@ internal/server/webassets/dist/*
 !internal/server/webassets/dist/.gitkeep
 benchmark-results/
 .cache/
+# mygo project output: the development app and the packaged builds.
+.mygo/
+cmd/*/dist/
 *.sqlite
 *.sqlite-journal
 *.sqlite-shm

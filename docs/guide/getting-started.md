@@ -98,17 +98,17 @@ See the [App guide](../../cmd/piik-app/README.md) for package and runtime detail
 For Local room and Public invite, expand **Site passphrase** to set an optional
 access passphrase.
 Local invitations use HTTPS. On first access, confirm the local certificate
-against the Host's App terminal before continuing; see the
+against the Host's App window before continuing; see the
 [certificate guide](./troubleshooting.md#local-https-certificate-warning).
 
 <details>
 <summary>Return to the launcher or change mode</summary>
 
 Once the room service starts, click the connected **App** button at the top right
-to return to the launcher, manage site access or reopen the room. The App terminal
-also keeps an **App launcher** address. To change between Local room and Public
-invite, close and reopen the App, then choose again. This ends the previous room
-and generates a new public-invitation address.
+to return to the launcher, manage site access or reopen the room in the App
+window. To change between Local room and Public invite, close and reopen the
+App, then choose again. This ends the previous room and generates a new
+public-invitation address.
 
 </details>
 

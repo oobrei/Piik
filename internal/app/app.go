@@ -62,14 +62,18 @@ type Options struct {
 	TunnelProcess  string
 	Ready          func(string)
 	localReady     func(string, string)
-	console        *console
-	logger         *slog.Logger
+	// surface presents the App's own pages. It is the mygo window, or a
+	// recorder when the App runs headless for packaging and gates.
+	surface surface
+	machine bool
+	logger  *slog.Logger
 }
 
 func Run(ctx context.Context, options Options) (returnedErr error) {
 	ctx, cancel := context.WithCancel(ctx)
 	options.Debug = options.Debug || debugEnabled(os.Getenv("PIIK_DEBUG"))
-	options.console = newConsole(cancel, options.DisableBrowser)
+	options.machine = options.DisableBrowser
+	options.surface = newSurface(options.machine, cancel)
 	var recorder *diagnostics.Recorder
 	var diagnosticsMu sync.Mutex
 	var restoreLogger func()
@@ -77,7 +81,7 @@ func Run(ctx context.Context, options Options) (returnedErr error) {
 		cancel()
 		diagnosticsMu.Lock()
 		defer diagnosticsMu.Unlock()
-		returnedErr = finishRun(options.console, recorder, restoreLogger, returnedErr)
+		returnedErr = finishRun(options.surface, recorder, restoreLogger, returnedErr)
 	}()
 	enableDiagnostics := func() error {
 		if recorder != nil {
@@ -102,7 +106,7 @@ func Run(ctx context.Context, options Options) (returnedErr error) {
 		dependencyLog = diagnostics.Writer("stdlib")
 		log.SetOutput(dependencyLog)
 		log.SetFlags(previousFlags)
-		options.console.send(consoleDebug{logPath: recorder.LogPath(), export: recorder.Export})
+		options.surface.SetDiagnostics(recorder.LogPath(), recorder.Export)
 		slog.Debug("piik-client", "event", "diagnostics-enabled")
 		return nil
 	}
@@ -112,7 +116,6 @@ func Run(ctx context.Context, options Options) (returnedErr error) {
 		}
 	}
 	slog.Debug("piik-client", "event", "start", "version", buildinfo.Version(), "revision", buildinfo.Revision)
-	options.console.show(consoleView{state: "starting"})
 	if err := validateMode(options); err != nil {
 		return errors.Join(failure.Configuration, err)
 	}
@@ -159,11 +162,11 @@ func Run(ctx context.Context, options Options) (returnedErr error) {
 			"localAccessProtected": config.LocalAccessPassword != ""})
 		recorder.Context("capture", nativeMedia.capture)
 		recorder.Binary("captureExecutable", nativeMedia.captureProcess)
-		options.console.send(consoleDebug{logPath: recorder.LogPath(), export: func() (string, error) {
+		options.surface.SetDiagnostics(recorder.LogPath(), func() (string, error) {
 			snapshot := input.Diagnostics()
 			recorder.Context("remoteInput", snapshot)
 			return recorder.Export()
-		}})
+		})
 		slog.Debug("piik-client", "event", "native-capabilities",
 			"video", nativeMedia.capabilities.Video, "processAudio", nativeMedia.capabilities.ProcessAudio,
 			"systemAudio", nativeMedia.capabilities.SystemAudio, "hardwareH264", nativeMedia.capabilities.HardwareH264,
@@ -178,7 +181,7 @@ func Run(ctx context.Context, options Options) (returnedErr error) {
 		AllowedOrigins:    allowedOrigins(config.ApprovedSites(), options.Port),
 		NativeMedia:       nativeMedia.capabilities,
 		NewControl:        nativeMedia.controlFactory(input),
-		Presentation:      options.console.setLanguage,
+		Presentation:      options.surface.SetLanguage,
 		QualityPreference: qualityPreference,
 	})
 	if err != nil {
@@ -186,46 +189,59 @@ func Run(ctx context.Context, options Options) (returnedErr error) {
 	}
 	defer func() { returnedErr = errors.Join(returnedErr, control.Close()) }()
 	slog.Debug("piik-client", "event", "control-ready")
-	if options.console.machine {
+	if options.machine {
 		if err = printEndpoint(control.Endpoint()); err != nil {
 			return err
 		}
 	}
-	return runLauncher(ctx, options, configPath, config, control, func(selected *Options, config appconfig.Config) error {
-		diagnosticsMu.Lock()
-		defer diagnosticsMu.Unlock()
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if selected.Debug {
-			if err := enableDiagnostics(); err != nil {
-				return err
+	// The room, the launcher and the control service run beside the window;
+	// mygo's event loop owns the main goroutine until the window closes.
+	launched := make(chan error, 1)
+	go func() {
+		launched <- runLauncher(ctx, options, configPath, config, control, func(selected *Options, config appconfig.Config) error {
+			diagnosticsMu.Lock()
+			defer diagnosticsMu.Unlock()
+			if ctx.Err() != nil {
+				return ctx.Err()
 			}
-		}
-		if recorder != nil {
-			selected.Debug = true
-			selected.logger = recorder.Logger()
-		}
-		recordContext(*selected, config)
-		return nil
-	})
+			if selected.Debug {
+				if err := enableDiagnostics(); err != nil {
+					return err
+				}
+			}
+			if recorder != nil {
+				selected.Debug = true
+				selected.logger = recorder.Logger()
+			}
+			recordContext(*selected, config)
+			return nil
+		})
+	}()
+	if options.machine {
+		return <-launched
+	}
+	// The window closes the App: its close cancels ctx, which ends the room
+	// service and the launcher, and the launch result joins at the end.
+	surfaceErr := options.surface.Run(ctx)
+	return errors.Join(<-launched, surfaceErr)
 }
 
-func finishRun(console *console, recorder *diagnostics.Recorder, restoreLogger func(), err error) error {
-	err = errors.Join(err, console.stop(err))
+func finishRun(surface surface, recorder *diagnostics.Recorder, restoreLogger func(), err error) error {
 	exportPath := ""
 	if recorder != nil {
 		slog.Debug("piik-client", "event", "stopped", "failed", err != nil, diagnostics.Error(err))
-		if console.program == nil || err != nil {
+		// A headless App exports at orderly shutdown; an interactive one keeps
+		// its report until the user asks for it, so a crash stays reproducible.
+		if surface.Headless() || err != nil {
 			path, exportErr := recorder.Export()
-			console.send(consoleExportResult{path: path, err: exportErr})
+			surface.ReportExport(path, exportErr)
 			err = errors.Join(err, exportErr)
 		}
 		restoreLogger()
 		err = errors.Join(err, recorder.Close())
 		exportPath = recorder.LastExportPath()
 	}
-	console.finish(err, exportPath)
+	surface.Finish(err, exportPath)
 	return err
 }
 
@@ -312,8 +328,7 @@ func runLauncher(
 	control.SetConnectURL(launch.URL())
 	defer control.SetConnectURL("")
 	// Launcher entry lives with the resident App, independently of room views.
-	options.console.send(consoleLauncher(launch.URL()))
-	defer options.console.send(consoleLauncher(""))
+	options.surface.SetLauncher(launch.URL())
 	launchAddress, err := url.Parse(launch.URL())
 	if err != nil {
 		return errors.Join(failure.Launcher, err)
@@ -325,12 +340,23 @@ func runLauncher(
 	if err != nil {
 		return errors.Join(failure.NativeControl, err)
 	}
+	// A page-initiated launch cannot move the window itself, so the window
+	// follows the launcher's navigation event for App-owned targets.
+	go func() {
+		for {
+			select {
+			case target := <-launch.Navigation():
+				options.surface.Open(target)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 	if !automatic && (startupSite.Site == "" || startupSite.Owned != nil) {
 		if startupSite.Owned != nil {
 			launch.Begin()
 		}
-		options.console.show(consoleView{state: "setup", entry: launch.URL()})
-		options.console.openBrowser(launch.EntryURL())
+		options.surface.Open(launch.EntryURL())
 	} else if initialConfig.Site != "" && !options.Local && !options.Link {
 		// A starred Site changes only the opening page. --site also remains an
 		// explicit approval shortcut; the launcher can start a Local room later.
@@ -345,7 +371,7 @@ func runLauncher(
 	runRoom := func(selection launcher.Selection) error {
 		options := initialOptions
 		if selection.Language != "" {
-			options.console.setLanguage(selection.Language)
+			options.surface.SetLanguage(selection.Language)
 		}
 		if err := launcher.SaveMode(configPath, selection.Mode); err != nil {
 			slog.Debug("Could not save the launcher mode", diagnostics.Error(err))
@@ -435,7 +461,8 @@ func runLauncher(
 			return roomErr
 		}
 		launch.SetResult("", roomErr)
-		initialOptions.console.show(consoleView{state: "setup", entry: launch.URL(), problem: roomErr})
+		initialOptions.surface.Open(launch.EntryURL())
+		initialOptions.surface.ReportFailure(roomErr)
 		slog.Debug("piik-client", "event", "local-room-stopped", diagnostics.Error(roomErr))
 	}
 }
@@ -496,14 +523,12 @@ func openDiagnostics(directory string) (*diagnostics.Recorder, error) {
 func openSite(site string, options Options, controlPort int) {
 	slog.Debug("piik-client", "event", "mode", "mode", "site")
 	targetURL := launcher.EntryURL(site, controlPort)
-	view := consoleView{mode: "site", state: "ready", entry: targetURL}
-	options.console.show(view)
-	if options.console.machine {
+	if options.machine {
 		fmt.Printf("Piik Site: %s\n", site)
 	}
-	if !options.DisableBrowser {
-		options.console.openBrowser(targetURL)
-	}
+	// An approved Site is someone else's origin, so it keeps the system
+	// browser; the window belongs to the App's own loopback pages.
+	options.surface.Open(targetURL)
 	if options.Ready != nil {
 		options.Ready(targetURL)
 	}
@@ -517,12 +542,12 @@ func runLocal(ctx context.Context, options Options, config appconfig.Config,
 	if err != nil {
 		return errors.Join(failure.Configuration, err)
 	}
-	view := consoleView{mode: "local", state: "starting", protected: config.LocalAccessPassword != ""}
+	mode := "local"
 	if options.Link {
-		view.mode = "link"
+		mode = "link"
 	}
-	slog.Debug("piik-client", "event", "mode", "mode", view.mode)
-	options.console.show(view)
+	slog.Debug("piik-client", "event", "mode", "mode", mode)
+	certificate := ""
 	bindAddress := net.IPv4zero
 	if !options.Link {
 		bindAddress = net.IPv4(127, 0, 0, 1)
@@ -558,7 +583,7 @@ func runLocal(ctx context.Context, options Options, config appconfig.Config,
 			return errors.Join(failure.LocalPort, fmt.Errorf("local HTTPS port is unavailable: %w", err))
 		}
 		listeners = append(listeners, tls.NewListener(secureListener, configuration))
-		view.certificate = tlsconfig.Fingerprint(configuration)
+		certificate = tlsconfig.Fingerprint(configuration)
 	}
 	var tunnel *publictunnel.Process
 	publicOrigin := ""
@@ -596,7 +621,7 @@ func runLocal(ctx context.Context, options Options, config appconfig.Config,
 	}
 	logger := options.logger
 	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(options.console.logWriter(), nil))
+		logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
 	localServer, err := serverapp.New(serverapp.Options{
 		Config:    localConfig,
@@ -620,7 +645,7 @@ func runLocal(ctx context.Context, options Options, config appconfig.Config,
 
 	// The readiness lines follow the listener, which the packaged smoke and the
 	// public-link gate both read from stdout before they probe the port.
-	if options.console.machine {
+	if options.machine {
 		if config.LocalAccessPassword == "" {
 			fmt.Println("Local access: open")
 		} else {
@@ -630,7 +655,7 @@ func runLocal(ctx context.Context, options Options, config appconfig.Config,
 			fmt.Printf("Public invitation origin: %s\n", publicOrigin)
 		} else {
 			fmt.Printf("LAN invitation origin: %s\n", serverconfig.Origin(localConfig.PublicBaseURL))
-			fmt.Printf("LAN certificate SHA-256: %s\n", view.certificate)
+			fmt.Printf("LAN certificate SHA-256: %s\n", certificate)
 		}
 	}
 	launchURL := launcher.LocalEntryURL(
@@ -638,16 +663,14 @@ func runLocal(ctx context.Context, options Options, config appconfig.Config,
 		config.LocalAccessPassword,
 		control.Endpoint().Port,
 	)
-	view.state, view.entry, view.invite = "ready", launchURL, publicOrigin
-	if view.invite == "" {
-		view.invite = serverconfig.Origin(localConfig.PublicBaseURL)
+	invitation := publicOrigin
+	if invitation == "" {
+		invitation = serverconfig.Origin(localConfig.PublicBaseURL)
 	}
-	options.console.show(view)
-	if !options.DisableBrowser {
-		options.console.openBrowser(launchURL)
-	}
+	options.surface.SetRoom(mode, launchURL, invitation, certificate, config.LocalAccessPassword != "")
+	options.surface.Open(launchURL)
 	if options.localReady != nil {
-		options.localReady(launchURL, view.invite)
+		options.localReady(launchURL, invitation)
 	} else if options.Ready != nil {
 		options.Ready(launchURL)
 	}

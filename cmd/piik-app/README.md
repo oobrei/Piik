@@ -3,24 +3,25 @@
 English · [简体中文](./README.zh-CN.md) · [Getting started](../../docs/guide/getting-started.md)
 
 Piik App provides local rooms and native screen capture through the Piik web
-interface in your system Browser.
+interface in its own window.
 
 ## Run A Package
 
 For Android APK installation and the shared browser workflow, follow
 [Getting started](../../docs/guide/getting-started.md#share-with-piik-app).
-The package, terminal and command-line instructions below apply to desktop App.
+The package and command-line instructions below apply to desktop App.
 
 Extract the matching platform bundle in full. On Windows and Linux, keep
 `runtime` beside the App executable and run `piik-app.exe` or `./piik-app`.
 On macOS, open `Piik App.app`; you can move the whole `.app` to Applications.
-The launcher opens in the system Browser.
+The launcher opens in the App window.
 If macOS blocks the first launch, follow the [Mac opening steps](../../docs/guide/troubleshooting.md#macos-blocks-first-launch).
 Linux native capture uses the system dependencies described
 in the [Linux capture guide](../../native/capture/linux/README.md).
 
-If the page does not open automatically, open the address shown in the terminal
-or press **O** there to retry. Keep the App running while using that page.
+The App window is the desktop surface: it shows the launcher and the Local room
+pages the App itself serves. Approved external Sites and Viewer invitations keep
+opening in your system Browser, which remains the Viewer surface.
 
 macOS native capture requires macOS 13 or newer. Windows App and browser sharing
 are the primary tested paths; [macOS/Linux feedback is welcome](https://github.com/TNTcraftHIM/Piik/issues).
@@ -50,7 +51,7 @@ For a [virtual LAN](../../docs/guide/network.md#optional-a-virtual-lan), choose 
 
 Friends use the HTTPS invitation on that address; the Host uses the local
 loopback page. On first access, friends must [confirm the certificate](../../docs/guide/troubleshooting.md#local-https-certificate-warning)
-against the App terminal. Repeat confirmation after App restarts.
+against the App window. Repeat confirmation after App restarts.
 
 ### Public Invite
 
@@ -81,8 +82,7 @@ The launcher lists approved sites:
 - Click a site to open it. **×** revokes its App connections while other sites and Local rooms continue.
 - **☆** selects one site to open on startup. Clear the star to restore the launcher;
   revoking the starred site also clears it. Approving another site keeps existing approvals.
-- Click a connected site's **App** button to reopen the launcher, or use the
-  **App launcher** address in the terminal.
+- Click a connected site's **App** button to reopen the launcher in the App window.
 
 The browser remembers activation. Reconnect after changing browsers, using a
 private window or clearing site data. A new public-invite address needs its own
@@ -139,14 +139,12 @@ require support from the relevant App and site.
 The launcher update button downloads the package; the
 [AtomGit mirror](https://atomgit.com/TNTcraftHIM/Piik/releases) is an alternative source. Restarting App or Server interrupts active shares.
 
-## Terminal And Shutdown
+## Window And Shutdown
 
-The terminal shows the current mode, entry links and startup state; its language
-follows the launcher and App-enabled pages.
-Press `o` to reopen the Browser, or `q` / Ctrl+C to end Local
-rooms and stop the local server and temporary public link. Plain-text output
-uses Ctrl+C. The Linux desktop entry also opens this terminal. The App keeps
-running after a Site tab closes.
+The App window shows the launcher and the Local room it serves; its language
+follows the page. Closing the window ends Local rooms and stops the local server
+and any temporary public link. The App keeps running while an approved Site tab
+stays open in your Browser; closing the window still ends the App.
 When launched in its own Windows console, a startup or runtime error leaves the
 error visible until Enter is pressed. Normal shutdown, existing terminals and
 redirected or automated runs exit directly.
@@ -162,8 +160,9 @@ For codec-specific failures, see [Windows H264 troubleshooting](../../docs/guide
 
 ### Diagnostics
 
-Enable **Debug launch** in the launcher before starting a room or connecting a Site, reproduce the
-problem, then press `D` in the interactive terminal to export a local ZIP.
+Enable **Debug launch** in the launcher before starting a room or connecting a Site and reproduce the
+problem. The App writes its report at orderly shutdown and reveals the ZIP in
+your file manager; its path is also printed to the terminal.
 Use `--debug` for failures before the selector opens. Exporting does not stop
 the share or upload the archive. For Browser diagnostics, open **Help → Debug**
 after the theme control, confirm the reload, then use **Help → Web report** to download.
