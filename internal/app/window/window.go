@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/TNTcraftHIM/Piik/internal/app/voice"
 	"github.com/TNTcraftHIM/Piik/internal/diagnostics"
 	"github.com/egoist/mygo"
 )
@@ -130,6 +131,10 @@ func Owned(target string) bool {
 // process.
 func (w *Window) Run(ctx context.Context) error {
 	mygo.App.SetName(w.options.Title)
+	// The room-voice chain is native Go bound to the page: the App runs the
+	// same AGC2 and DFSMN code the rest of Piik uses, with no second
+	// implementation in the Browser.
+	mygo.Bind(voice.NewService())
 	mygo.App.WhenReady(w.create)
 	go func() {
 		<-ctx.Done()

@@ -62,5 +62,8 @@
     "vitest": "4.1.12",
     "ws": "8.21.3",
     "zod": "4.6.6"
+  },
+  "dependencies": {
+    "mygo-runtime": "^0.9.1"
   }
 }

@@ -178,6 +178,10 @@ export class RoomVoiceSession {
       const input = request.input = new MicrophoneInput(stream, context, request.settings.volume, () => {
         if (this.endpoint.input === input || this.capture === request) this.stopMicrophone();
       });
+      // Room voice runs through the App's native chain when the App is hosting
+      // this page and the user left voice processing to Piik. A Browser page,
+      // or a user delegating processing to the device, keeps plain capture.
+      if (!request.settings.voiceProcessing) await input.attachDSP();
       request.context = undefined;
       if (!await resumed) throw new Error("Microphone audio context could not start");
       if (this.capture !== request) return;
