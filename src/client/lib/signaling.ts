@@ -16,7 +16,8 @@ import { qualitySettingsEqual } from "../media/quality";
 import { debugEvent } from "./debug";
 import { RoomInteractionSession } from "./room-interactions";
 import { RoomVoiceSession } from "../room-voice/session";
-import { getSiteAccess } from "./api";
+import { ApiError, getRuntimeCapabilities, getSiteAccess } from "./api";
+import { fetchRemoteStatus, getRemoteEndpoint, signalWebSocketUrl } from "./remote-endpoint";
 
 type WithoutProtocolEnvelope<T> = T extends {
   type: string;
@@ -72,12 +73,6 @@ export function shouldReconnectSignaling(code: number): boolean {
     code !== INVALID_MESSAGE_CLOSE_CODE &&
     code !== SIGNAL_CLOSE_CODES.viewerAccessRevoked
   );
-}
-
-function signalUrl(): string {
-  const url = new URL("/signal", window.location.href);
-  url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return url.toString();
 }
 
 export class SignalingClient {
@@ -401,7 +396,7 @@ export class SignalingClient {
 
     const generation = ++this.socketGeneration;
     debugEvent("signal", "connecting", { role: this.identity.role, generation });
-    const socket = new WebSocket(signalUrl());
+    const socket = new WebSocket(signalWebSocketUrl());
     this.socket = socket;
     let routeSelectionRequestedAtAuth = false;
 
@@ -597,15 +592,34 @@ export class SignalingClient {
       this.accessCheck = controller;
       const timer = window.setTimeout(() => controller.abort(), AUTHENTICATION_TIMEOUT_MS);
       try {
-        const access = await getSiteAccess(controller.signal);
-        if (this.stopped || generation !== this.socketGeneration) return;
-        if (access.required && !access.authenticated) {
+        if (getRemoteEndpoint().session) {
+          // The launcher holds the remote session, and its token is the only
+          // credential: /api/site-access is not part of the proxied surface.
+          const status = await fetchRemoteStatus(controller.signal);
+          if (this.stopped || generation !== this.socketGeneration) return;
+          if (!status.connected) {
+            this.stop();
+            this.events.onAccessRequired();
+            return;
+          }
+          await getRuntimeCapabilities(controller.signal);
+        } else {
+          const access = await getSiteAccess(controller.signal);
+          if (this.stopped || generation !== this.socketGeneration) return;
+          if (access.required && !access.authenticated) {
+            this.stop();
+            this.events.onAccessRequired();
+            return;
+          }
+        }
+      } catch (error) {
+        // An unavailable check is a connection failure, not evidence of denial;
+        // a rejected remote token is the one denial the App can repair.
+        if (getRemoteEndpoint().session && error instanceof ApiError && error.status === 401) {
           this.stop();
           this.events.onAccessRequired();
           return;
         }
-      } catch {
-        // An unavailable check is a connection failure, not evidence of denial.
       } finally {
         window.clearTimeout(timer);
         if (this.accessCheck === controller) this.accessCheck = null;

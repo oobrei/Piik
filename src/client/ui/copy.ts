@@ -44,7 +44,7 @@ const state: CopyPrefs = {
 };
 
 function syncDocumentLanguage(): void {
-  if (typeof document !== "undefined") {
+  if (typeof document !== "undefined" && document.documentElement) {
     document.documentElement.lang = locales[state.lang].tag;
   }
 }
@@ -76,7 +76,7 @@ function commit(next: Partial<CopyPrefs>): void {
 // Cross-tab sync: a commit in another tab re-applies the persisted values
 // here. Identical-value writes fire no storage event, so tabs converge
 // without re-notify loops.
-if (typeof window !== "undefined") {
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
   window.addEventListener("storage", (event) => {
     if (event.key === LANG_STORAGE_KEY || event.key === MODE_STORAGE_KEY) {
       const stored = readStored();

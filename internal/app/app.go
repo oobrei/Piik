@@ -319,6 +319,19 @@ func runLauncher(
 				selected.Debug = true
 				return configureDiagnostics(&selected, config)
 			},
+			RemoteHosts: config.RemoteHosts,
+			ChangeRemoteHost: func(host appconfig.RemoteHost, allowed bool) ([]appconfig.RemoteHost, error) {
+				current, err := updateConfig(func(next *appconfig.Config) {
+					hosts := slices.DeleteFunc(slices.Clone(next.RemoteHosts), func(value appconfig.RemoteHost) bool {
+						return value.Origin == host.Origin
+					})
+					if allowed {
+						hosts = append(hosts, host)
+					}
+					next.RemoteHosts = hosts
+				})
+				return current.RemoteHosts, err
+			},
 		},
 	)
 	if err != nil {
@@ -624,10 +637,11 @@ func runLocal(ctx context.Context, options Options, config appconfig.Config,
 		logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
 	localServer, err := serverapp.New(serverapp.Options{
-		Config:    localConfig,
-		Listeners: listeners,
-		Assets:    webassets.FS(),
-		Logger:    logger,
+		Config:                  localConfig,
+		Listeners:               listeners,
+		Assets:                  webassets.FS(),
+		Logger:                  logger,
+		RemoteCertificateSHA256: certificate,
 	})
 	if err != nil {
 		return errors.Join(failure.LocalServer, err)

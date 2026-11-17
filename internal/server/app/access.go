@@ -21,6 +21,10 @@ import (
 const (
 	defaultSessionTTLSeconds = 24 * 60 * 60
 	cookieVersion            = "v1"
+	// apiTokenVersion marks a token issued to a non-browser API client. It is
+	// distinct from cookieVersion, so neither credential form is accepted for
+	// the other.
+	apiTokenVersion = "api1"
 )
 
 var (
@@ -110,13 +114,23 @@ func (a *siteAccessGate) isAuthenticated(cookieHeader string) bool {
 	if !a.required() {
 		return true
 	}
-	value := readCookie(cookieHeader, a.cookieName())
-	if value == "" {
-		return false
+	return a.validToken(readCookie(cookieHeader, a.cookieName()), cookieVersion)
+}
+
+// isValidAPIToken verifies an API token's signature and expiry when access is
+// required. The version segment keeps it apart from the browser cookie.
+func (a *siteAccessGate) isValidAPIToken(token string) bool {
+	if !a.required() {
+		return true
 	}
+	return a.validToken(token, apiTokenVersion)
+}
+
+// validToken checks the version, expiry and signature of one signed value.
+func (a *siteAccessGate) validToken(value, version string) bool {
 	segments := strings.Split(value, ".")
 	if len(segments) != 3 ||
-		segments[0] != cookieVersion ||
+		segments[0] != version ||
 		!accessExpiresPattern.MatchString(segments[1]) ||
 		!accessSignaturePattern.MatchString(segments[2]) {
 		return false
@@ -152,6 +166,17 @@ func (a *siteAccessGate) createCookie() string {
 		attributes = append(attributes, "Secure")
 	}
 	return strings.Join(attributes, "; ")
+}
+
+// createAPIToken returns a signed API token and its expiry in Unix
+// milliseconds, or ("", 0) when access is not required.
+func (a *siteAccessGate) createAPIToken() (string, int64) {
+	if !a.required() {
+		return "", 0
+	}
+	expiresAt := floorSeconds(a.now()) + int64(a.ttlSeconds)
+	payload := apiTokenVersion + "." + strconv.FormatInt(expiresAt, 10)
+	return payload + "." + a.sign(payload), expiresAt * 1_000
 }
 
 func (a *siteAccessGate) cookieName() string {

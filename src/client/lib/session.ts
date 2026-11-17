@@ -9,6 +9,7 @@ import { z } from "zod";
 import { createOpaqueId } from "./opaque-id";
 import { isLang, type Lang } from "../locales";
 import { withBrowserDebug } from "./debug";
+import { enterRemoteRoute, getRemoteEndpoint, returnToRemoteLauncher } from "./remote-endpoint";
 import { NATIVE_CLIENT_PORT_START, NATIVE_CLIENT_PORT_END } from "../native/discovery-ports";
 
 const CLIENT_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
@@ -31,7 +32,14 @@ export function isClientActivated(): boolean {
   catch { return clientActivatedInPage; }
 }
 
-export function activateClient(): void {
+export function activateClient(controlPort?: number): void {
+  const port = controlPort === undefined ? null : parseClientRuntimePort(String(controlPort));
+  // A launcher-provided port is this tab's App control endpoint, so it is the
+  // runtime the page keeps even before the activation event reaches the UI.
+  if (port !== null) {
+    clientPortInPage = port;
+    writeSessionValue(CLIENT_RUNTIME_STORAGE_KEY, String(port));
+  }
   clientActivatedInPage = true;
   try { window.localStorage.setItem(CLIENT_LAUNCH_STORAGE_KEY, "1"); } catch { /* Optional persistence. */ }
   window.dispatchEvent(new Event(CLIENT_ACTIVATION_EVENT));
@@ -572,6 +580,46 @@ export function replaceViewerInvite(
     return;
   }
   clearViewerGrant(roomId);
+}
+
+/** Keeps an invitation grant for this tab, as an invite fragment does. */
+export function storeViewerGrant(roomId: string, grant: string): boolean {
+  if (!isValidRoomId(roomId) || !isValidViewerGrant(grant)) {
+    return false;
+  }
+  writeSessionValue(viewerGrantStorageKey(roomId), grant);
+  return true;
+}
+
+/** The viewer route for a room whose grant this tab already holds. */
+export function readViewerRouteForRoom(roomId: string): ViewerRoute {
+  const viewerGrant = readViewerGrant(roomId);
+  return viewerGrant ? { roomId, viewerGrant } : { roomId };
+}
+
+/**
+ * Opens a route without leaving the launcher origin. A remote session owns the
+ * page, so its surfaces are shown in place; otherwise this is a real navigation.
+ */
+export function navigateAppRoute(route: string): void {
+  if (!getRemoteEndpoint().session) {
+    window.location.assign(route);
+    return;
+  }
+  const target = new URL(route, window.location.href);
+  const parsed = parseAppRoute(target.pathname);
+  if (parsed.kind === "viewer") {
+    const grant = target.hash.match(/^#v=(.*)$/)?.[1];
+    if (grant !== undefined) storeViewerGrant(parsed.roomId, grant);
+    enterRemoteRoute({ kind: "viewer", roomId: parsed.roomId });
+    return;
+  }
+  if (parsed.kind === "host" || parsed.kind === "join") {
+    enterRemoteRoute({ kind: parsed.kind });
+    return;
+  }
+  // An unroutable target stays on the launcher instead of leaving the App.
+  returnToRemoteLauncher();
 }
 
 export function readViewerGrant(roomId: string): string | null {

@@ -17,14 +17,22 @@ import {
 } from "./lib/api";
 import type { RuntimeCapabilities } from "../shared/protocol";
 import {
+  navigateAppRoute,
   parseAppRoute,
   readViewerRoute,
+  readViewerRouteForRoom,
   watchViewerInvites,
   takeClientLaunchBootstrap,
   watchClientActivation,
   isClientActivated,
   type ViewerRoute,
 } from "./lib/session";
+import {
+  connectRemoteHost,
+  fetchRemoteStatus,
+  returnToRemoteLauncher,
+  useRemoteEndpoint,
+} from "./lib/remote-endpoint";
 import { AppHeader } from "./components/living/Header";
 import { Btn, Pill } from "./components/living/primitives";
 import { Comic, type ComicKind } from "./components/living/Comic";
@@ -154,9 +162,27 @@ class RouteBoundary extends Component<
 
 function AppRoute() {
   const [viewerRoute, setViewerRoute] = useState(initialViewerRoute);
+  const remoteEndpoint = useRemoteEndpoint();
+  const remoteSession = remoteEndpoint.session;
   useEffect(() => {
     if (appRoute.kind === "viewer") return watchViewerInvites(setViewerRoute);
   }, []);
+  // The URL can name a remote surface before this page has asked the launcher
+  // which session it holds. A session that is gone returns to the launcher.
+  const hydratingRemoteRoute =
+    appRoute.kind === "client" &&
+    remoteEndpoint.viewRoute.kind !== "launcher" &&
+    remoteSession === null;
+  useEffect(() => {
+    if (!hydratingRemoteRoute) return;
+    let active = true;
+    void fetchRemoteStatus().catch(() => {
+      if (active) returnToRemoteLauncher();
+    });
+    return () => {
+      active = false;
+    };
+  }, [hydratingRemoteRoute]);
   if (PlaybackPreviewPage && window.location.pathname === "/__playback-preview") {
     return <PlaybackPreviewPage />;
   }
@@ -167,6 +193,20 @@ function AppRoute() {
     return <TooltipPreviewPage />;
   }
   if (appRoute.kind === "client") {
+    const remoteRoute = remoteEndpoint.viewRoute;
+    if (remoteSession && remoteRoute.kind !== "launcher") {
+      return (
+        <SiteAccessGate
+          key={remoteRoute.kind === "viewer"
+            ? `remote-viewer-${remoteRoute.roomId}`
+            : `remote-${remoteRoute.kind}`}
+          surface={remoteRoute.kind}
+          viewerRoute={remoteRoute.kind === "viewer"
+            ? readViewerRouteForRoom(remoteRoute.roomId)
+            : undefined}
+        />
+      );
+    }
     return <AppLauncherPage />;
   }
   if (appRoute.kind === "viewer" && viewerRoute) {
@@ -250,7 +290,7 @@ function StaticRoute({
               title="join.title"
               cap="join.title"
               hint="hint-join-go"
-              onClick={() => window.location.assign(withBrowserDebug("/join"))}
+              onClick={() => navigateAppRoute(withBrowserDebug("/join"))}
             />
           ) : action === "reload" ? (
             <Btn
@@ -276,6 +316,7 @@ function SiteAccessGate({
 }) {
   const { t, vis } = useCopy();
   const launchedByClient = useSyncExternalStore(watchClientActivation, isClientActivated);
+  const remoteSession = useRemoteEndpoint().session;
   const [access, setAccess] = useState<AccessState>({ kind: "checking" });
   const [capabilities, setCapabilities] =
     useState<RuntimeCapabilities | null>(null);
@@ -291,6 +332,24 @@ function SiteAccessGate({
 
   useEffect(() => {
     let active = true;
+    if (remoteSession) {
+      // The launcher already authenticated with the host, and its token is the
+      // only credential: /api/site-access is not part of the proxied surface.
+      setAccess({ kind: "ready", renewalRequired: false });
+      if (remoteSession.capabilities) {
+        setCapabilities(remoteSession.capabilities);
+      } else {
+        void getRuntimeCapabilities().then(
+          (nextCapabilities) => {
+            if (active) setCapabilities(nextCapabilities);
+          },
+          () => undefined,
+        );
+      }
+      return () => {
+        active = false;
+      };
+    }
     void loadAccess(clientAccessBootstrap ?? undefined).then(
       ([status, nextCapabilities]) => {
         if (!active) return;
@@ -316,7 +375,7 @@ function SiteAccessGate({
     return () => {
       active = false;
     };
-  }, []);
+  }, [remoteSession]);
 
   useEffect(() => {
     if (access.kind !== "ready" || !access.renewalRequired) {
@@ -350,6 +409,18 @@ function SiteAccessGate({
 
   async function retry(): Promise<void> {
     setAccess({ kind: "checking" });
+    if (remoteSession) {
+      try {
+        const status = await fetchRemoteStatus();
+        // A session the launcher no longer holds already returned to its launcher.
+        if (!status.connected) return;
+        setCapabilities(status.capabilities ?? null);
+        setAccess({ kind: "ready", renewalRequired: false });
+      } catch (error) {
+        setAccess({ kind: "unavailable", message: readableError(error, t) });
+      }
+      return;
+    }
     try {
       const [status, nextCapabilities] = await loadAccess();
       setCapabilities(nextCapabilities);
@@ -370,6 +441,17 @@ function SiteAccessGate({
 
     setSubmitting(true);
     try {
+      if (remoteSession) {
+        // An expired remote token is renewed by the launcher, which holds it.
+        const status = await connectRemoteHost({
+          target: remoteSession.origin ?? "",
+          acceptedFingerprint: remoteSession.certificateSha256,
+          sitePassword: submittedPassword,
+        });
+        setCapabilities(status.capabilities ?? null);
+        setAccess({ kind: "ready", renewalRequired: false });
+        return;
+      }
       const [status, nextCapabilities] = await loadAccess(submittedPassword);
       setCapabilities(nextCapabilities);
       setAccess(stateFromStatus(status));

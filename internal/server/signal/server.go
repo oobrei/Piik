@@ -82,7 +82,10 @@ type Options struct {
 	NATPredictionEnabled bool
 	AllowedOrigins       map[string]struct{}
 	SiteAccessAtUpgrade  func(*http.Request) bool
-	PublicBaseURL        *url.URL
+	// AllowAPIClient admits an upgrade request that carries no Origin header,
+	// which a browser always sends. nil admits none.
+	AllowAPIClient func(*http.Request) bool
+	PublicBaseURL  *url.URL
 	// Now returns Unix milliseconds; nil uses the wall clock.
 	Now                     func() int64
 	AuthenticationTimeoutMs int
@@ -157,6 +160,7 @@ type Server struct {
 	natPredictionEnabled      bool
 	allowedOrigins            map[string]struct{}
 	siteAccessAtUpgrade       func(*http.Request) bool
+	allowAPIClient            func(*http.Request) bool
 	publicBaseURL             *url.URL
 	now                       func() int64
 	afterFunc                 func(time.Duration, func()) func() bool
@@ -214,6 +218,7 @@ func New(options Options) (*Server, error) {
 		natPredictionEnabled:          options.NATPredictionEnabled,
 		allowedOrigins:                options.AllowedOrigins,
 		siteAccessAtUpgrade:           options.SiteAccessAtUpgrade,
+		allowAPIClient:                options.AllowAPIClient,
 		publicBaseURL:                 options.PublicBaseURL,
 		now:                           options.Now,
 		afterFunc:                     options.AfterFunc,
@@ -348,7 +353,16 @@ func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		rejectUpgrade(writer, http.StatusServiceUnavailable)
 		return
 	}
-	if !s.isAllowedOrigin(request.Header.Get("Origin")) {
+	if origin := request.Header.Get("Origin"); origin != "" {
+		// A browser request must come from a configured Origin.
+		if !s.isAllowedOrigin(origin) {
+			s.mu.Unlock()
+			rejectUpgrade(writer, http.StatusForbidden)
+			return
+		}
+	} else if s.allowAPIClient == nil || !s.allowAPIClient(request) {
+		// Browsers always send Origin; a request without one is a non-browser
+		// client that must declare itself.
 		s.mu.Unlock()
 		rejectUpgrade(writer, http.StatusForbidden)
 		return
@@ -364,8 +378,8 @@ func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 
 	siteAccessAuthenticated := s.siteAccessAtUpgrade(request)
 	var sess *session
-	// Origin was verified above with the exact isAllowedOrigin rule, so the
-	// library's own check is skipped.
+	// The Origin was verified above with the exact isAllowedOrigin rule, or the
+	// request is an admitted API client, so the library's own check is skipped.
 	conn, err := websocket.Accept(writer, request, &websocket.AcceptOptions{
 		InsecureSkipVerify: true,
 		CompressionMode:    websocket.CompressionDisabled,

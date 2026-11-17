@@ -7,12 +7,14 @@ import { LoadingStatus } from "../components/living/WaitingStatus";
 import { AppReleaseNotice } from "../components/living/AppReleaseNotice";
 import { AppHeader } from "../components/living/Header";
 import { LauncherForm, type AppMode } from "../components/living/LauncherForm";
+import { RemoteConnectCard } from "../components/living/RemoteConnectCard";
 import { Btn, Pill } from "../components/living/primitives";
 import { hasCopyPreference, isCopyKey, useCopy } from "../ui/copy";
 import { consoleLanguage } from "../locales";
 import { Glyph } from "../ui/icons";
 import { currentThemePreference, subscribeTheme } from "../ui/theme";
 import { clientLaunchURL, type ClientLaunchPresentation } from "../lib/session";
+import { fetchRemoteStatus } from "../lib/remote-endpoint";
 import type { AppReleaseIdentity } from "../lib/release-update";
 import { useReleaseUpdate } from "../lib/use-release-update";
 
@@ -20,6 +22,8 @@ const launcherStateSchema = z.object({
   sites: z.array(z.string()),
   startupSite: z.string(),
   ownedSites: z.array(z.string()).default([]),
+  // The launcher owns this list, so the page parses it without another owner.
+  remoteHosts: z.array(z.object({ origin: z.string(), fingerprint: z.string().optional() })).default([]),
   startupMode: z.enum(["local", "link", ""]).nullish(),
   localAccessPassword: z.string(),
   defaultMode: z.enum(["local", "link"]),
@@ -52,6 +56,7 @@ export function AppLauncherPage() {
   const [sites, setSites] = useState<string[]>([]);
   const [startupSite, setStartupSite] = useState("");
   const [ownedSites, setOwnedSites] = useState<string[]>([]);
+  const [remoteHosts, setRemoteHosts] = useState<z.infer<typeof launcherStateSchema>["remoteHosts"]>([]);
   const [startupMode, setStartupMode] = useState<AppMode | undefined>();
   const [openOnApproval, setOpenOnApproval] = useState(false);
   const [localAccessPassword, setLocalAccessPassword] = useState("");
@@ -132,6 +137,7 @@ export function AppLauncherPage() {
         setStartupSite(state.startupSite);
         setStartupMode(state.startupMode || undefined);
         setOwnedSites(state.ownedSites);
+        setRemoteHosts(state.remoteHosts);
         setAppDebug(state.debug);
         setDebug(state.debug === true);
         setError(previous => state.detail ? { kind: "launch", reason: state.reason, detail: state.detail }
@@ -163,6 +169,11 @@ export function AppLauncherPage() {
       window.removeEventListener("focus", refresh);
     };
   }, [reload]);
+
+  useEffect(() => {
+    // A returning launcher shows the remote session the App still holds.
+    void fetchRemoteStatus().catch(() => undefined);
+  }, []);
 
   function beginStateChange(): () => void {
     stateChanges.current.revision++;
@@ -351,41 +362,44 @@ export function AppLauncherPage() {
             </div>
           </section>
         ) : (
-          <LauncherForm
-            roomError={error?.kind === "launch" ? <>
-              <Pill icon="alert" tone="bad" label={t("client.launch.error")} alert comic="signal-failed" />
-              {isCopyKey(errorKey) && <p className={vis ? "visually-hidden" : "lr-client-launch-status"}>{t(errorKey)}</p>}
-              <p className={vis ? "visually-hidden" : "lr-client-launch-status"}>{t("client.launch.retryHint")}</p>
-              {error.detail && <details className="lr-client-launch-technical">
-                <summary>{t("client.launch.errorDetails")}</summary>
-                <p className="lr-client-launch-detail">{error.detail}</p>
-              </details>}
-            </> : undefined}
-            mode={mode}
-            modes={modes}
-            sites={sites}
-            siteAddress={siteEntry.origin}
-            onSelectSite={origin => {
-              setSiteEntry({ origin, confirming: true });
-              setSiteError(undefined);
-            }}
-            startupSite={startupSite}
-            ownedStartup={startupMode}
-            ownedSites={ownedSites}
-            onToggleStartupSite={site => void changeSite(startupSite === site || startupMode && ownedSites.includes(site) ? "" : site, "startup-site")}
-            localAccessPassword={localAccessPassword}
-            onModeChange={setMode}
-            onRemoveSite={site => void changeSite(site, "site", false, false)}
-            siteBusy={siteBusy}
-            siteError={siteError}
-            target={target}
-            entryURL={launchURL}
-            onLocalAccessPasswordChange={setLocalAccessPassword}
-            lan={lan && { ...lan, onChange: (selected) => setLan({ ...lan, selected }) }}
-            onSubmit={launch}
-          >
-            {update && <AppReleaseNotice update={update} />}
-          </LauncherForm>
+          <div className="lr-client-launch-stack">
+            <LauncherForm
+              roomError={error?.kind === "launch" ? <>
+                <Pill icon="alert" tone="bad" label={t("client.launch.error")} alert comic="signal-failed" />
+                {isCopyKey(errorKey) && <p className={vis ? "visually-hidden" : "lr-client-launch-status"}>{t(errorKey)}</p>}
+                <p className={vis ? "visually-hidden" : "lr-client-launch-status"}>{t("client.launch.retryHint")}</p>
+                {error.detail && <details className="lr-client-launch-technical">
+                  <summary>{t("client.launch.errorDetails")}</summary>
+                  <p className="lr-client-launch-detail">{error.detail}</p>
+                </details>}
+              </> : undefined}
+              mode={mode}
+              modes={modes}
+              sites={sites}
+              siteAddress={siteEntry.origin}
+              onSelectSite={origin => {
+                setSiteEntry({ origin, confirming: true });
+                setSiteError(undefined);
+              }}
+              startupSite={startupSite}
+              ownedStartup={startupMode}
+              ownedSites={ownedSites}
+              onToggleStartupSite={site => void changeSite(startupSite === site || startupMode && ownedSites.includes(site) ? "" : site, "startup-site")}
+              localAccessPassword={localAccessPassword}
+              onModeChange={setMode}
+              onRemoveSite={site => void changeSite(site, "site", false, false)}
+              siteBusy={siteBusy}
+              siteError={siteError}
+              target={target}
+              entryURL={launchURL}
+              onLocalAccessPasswordChange={setLocalAccessPassword}
+              lan={lan && { ...lan, onChange: (selected) => setLan({ ...lan, selected }) }}
+              onSubmit={launch}
+            >
+              {update && <AppReleaseNotice update={update} />}
+            </LauncherForm>
+            <RemoteConnectCard remoteHosts={remoteHosts} onRemoteHostsChange={setRemoteHosts} controlPort={controlPort} />
+          </div>
         )}
       </main>
       <footer className="lr-client-footer">

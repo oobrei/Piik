@@ -21,6 +21,7 @@ import (
 	appconfig "github.com/TNTcraftHIM/Piik/internal/app/config"
 	"github.com/TNTcraftHIM/Piik/internal/app/failure"
 	"github.com/TNTcraftHIM/Piik/internal/app/lan"
+	"github.com/TNTcraftHIM/Piik/internal/app/remoteclient"
 	"github.com/TNTcraftHIM/Piik/internal/diagnostics"
 	"github.com/TNTcraftHIM/Piik/internal/httpassets"
 )
@@ -62,6 +63,13 @@ type Options struct {
 	ChangeSite          func(string, bool) ([]string, error)
 	SaveStartupSite     func(StartupIntent) error
 	EnableDebug         func() error
+
+	// Remote is the App's remote session owner; nil starts a fresh one.
+	// RemoteHosts are the saved hosts; ChangeRemoteHost persists an approval
+	// or a revocation and returns the complete saved list.
+	Remote           *remoteclient.Manager
+	RemoteHosts      []appconfig.RemoteHost
+	ChangeRemoteHost func(appconfig.RemoteHost, bool) ([]appconfig.RemoteHost, error)
 }
 
 var listLANAddresses = lan.List
@@ -87,6 +95,9 @@ type Server struct {
 	changeSite          func(string, bool) ([]string, error)
 	saveStartupSite     func(StartupIntent) error
 	enableDebug         func() error
+	remote              *remoteclient.Manager
+	remoteHosts         []appconfig.RemoteHost
+	changeRemoteHost    func(appconfig.RemoteHost, bool) ([]appconfig.RemoteHost, error)
 	selection           chan Selection
 	navigation          chan string
 	done                chan error
@@ -116,6 +127,10 @@ func Start(parent context.Context, assets fs.FS, options Options) (*Server, erro
 	normalizedSites, err := appconfig.NormalizeSites(options.Sites)
 	if err != nil {
 		return nil, fmt.Errorf("App launcher Site is invalid: %w", err)
+	}
+	remoteHosts, err := appconfig.NormalizeRemoteHosts(options.RemoteHosts)
+	if err != nil {
+		return nil, fmt.Errorf("App launcher remote host is invalid: %w", err)
 	}
 	if assets == nil {
 		return nil, errors.New("App launcher assets are unavailable")
@@ -147,10 +162,16 @@ func Start(parent context.Context, assets fs.FS, options Options) (*Server, erro
 		changeSite:          options.ChangeSite,
 		saveStartupSite:     options.SaveStartupSite,
 		enableDebug:         options.EnableDebug,
+		remote:              options.Remote,
+		remoteHosts:         remoteHosts,
+		changeRemoteHost:    options.ChangeRemoteHost,
 		selection:           make(chan Selection, 1),
 		navigation:          make(chan string, 1),
 		done:                make(chan error, 1),
 		ready:               make(chan struct{}),
+	}
+	if server.remote == nil {
+		server.remote = remoteclient.NewManager()
 	}
 	server.client = httpassets.Compress(http.HandlerFunc(server.serveClient))
 	server.httpServer = &http.Server{
@@ -271,6 +292,9 @@ func (server *Server) setResult(target string, resultErr error) {
 
 func (server *Server) Close() error {
 	server.closeOnce.Do(server.cancel)
+	// A remote session owns outbound transports and a signaling bridge; both
+	// end with the launcher that exposed them.
+	server.remote.Disconnect()
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	return server.httpServer.Shutdown(ctx)
@@ -306,9 +330,23 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 		server.handleSite(response, request, true)
 	case "/api/client-launcher/debug":
 		server.handleDebug(response, request)
+	case "/api/client-remote/probe":
+		server.handleRemoteProbe(response, request)
+	case "/api/client-remote/connect":
+		server.handleRemoteConnect(response, request)
+	case "/api/client-remote/status":
+		server.handleRemoteStatus(response, request)
+	case "/api/client-remote/disconnect":
+		server.handleRemoteDisconnect(response, request)
+	case "/api/client-remote/host":
+		server.handleRemoteHost(response, request)
 	case "/client", "/client/":
 		server.client.ServeHTTP(response, request)
 	default:
+		if strings.HasPrefix(request.URL.Path, remoteProxyPrefix) {
+			server.handleRemoteProxy(response, request)
+			return
+		}
 		server.static.ServeHTTP(response, request)
 	}
 }
@@ -363,6 +401,7 @@ func (server *Server) handleState(response http.ResponseWriter, request *http.Re
 		"starting":            starting,
 		"detail":              errorDetail(resultErr),
 		"reason":              failure.Of(resultErr),
+		"remoteHosts":         slices.Clone(server.remoteHosts),
 		"lan":                 map[string]any{"addresses": addresses, "selected": selected},
 		"modes": func() []Mode {
 			if len(server.modes) > 0 {

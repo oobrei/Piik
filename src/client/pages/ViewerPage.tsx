@@ -36,6 +36,7 @@ import { participantConnection } from "../lib/participant-connection";
 import { describeVoiceConnection, voiceConnectionDetails } from "../room-voice/VoiceConnectionDetails";
 import { RoomVoicePanel, RoomVoiceControls, RoomVoiceSettings } from "../room-voice/RoomVoicePanel";
 import { getRuntimeCapabilities } from "../lib/api";
+import { siteHostLabel } from "../lib/remote-endpoint";
 import { ConnectionDetails } from "../components/living/ConnectionDetails";
 import { PawnDetail } from "../components/living/PawnDetail";
 import { Lcd } from "../components/living/RoomChip";
@@ -2169,12 +2170,12 @@ export function ViewerPage({
             <div className="lr-join-panel">
               <Comic kind={deniedComic} theme="paper" tone={viewerStatus.activity.tone} />
               <span className="visually-hidden" role="alert">
-                {t(deniedMessageKey)}{"\n"}{t(deniedHintKey, { site: window.location.host })}
+                {t(deniedMessageKey)}{"\n"}{t(deniedHintKey, { site: siteHostLabel() })}
               </span>
               {vis ? null : (
                 <div className="lr-access-text">
                   <h1>{t(deniedMessageKey)}</h1>
-                  <p className="lr-join-site">{t(deniedHintKey, { site: window.location.host })}</p>
+                  <p className="lr-join-site">{t(deniedHintKey, { site: siteHostLabel() })}</p>
                 </div>
               )}
               {codeOnlyDenied && (

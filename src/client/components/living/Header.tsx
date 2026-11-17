@@ -12,6 +12,13 @@ import { Glyph } from "../../ui/icons";
 import { AppConnectionButton } from "./AppConnectionButton";
 import { useAnchoredPopover } from "./use-anchored-popover";
 import { useProjectLink } from "../../lib/use-project-link";
+import {
+  disconnectRemoteHost,
+  returnToRemoteLauncher,
+  useRemoteEndpoint,
+  type RemoteSessionStatus,
+} from "../../lib/remote-endpoint";
+import { navigateAppRoute } from "../../lib/session";
 import { Btn } from "./primitives";
 
 export type LedState = "live" | "busy" | "warn" | "bad" | "off";
@@ -204,6 +211,56 @@ export function HeaderControls({ diagnosticControl, appControl }: { diagnosticCo
   );
 }
 
+/** The active remote session, with the ways back to its own launcher. */
+export function RemoteSessionControl() {
+  const { session } = useRemoteEndpoint();
+  return session ? <RemoteSessionMenu session={session} /> : null;
+}
+
+export function RemoteSessionMenu({ session }: { session: RemoteSessionStatus }) {
+  const { vis, t } = useCopy();
+  const id = useId();
+  const trigger = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [pending, setPending] = useState<"idle" | "busy" | "failed">("idle");
+  useAnchoredPopover(trigger, panel);
+  const label = session.hostLabel || session.origin || "";
+  const fingerprint = session.certificateSha256 ?? "";
+  return <>
+    <Tooltip kind="hint-client-site" text={vis ? undefined : t("client.remote.sessionLabel")} disabled={open} place="below" align="end">
+      <button ref={trigger} type="button" className="lr-btn is-compact lr-remote-session"
+        popoverTarget={id} aria-haspopup="dialog" aria-expanded={open} aria-label={t("client.remote.sessionLabel")}>
+        <Glyph name="globe" size={16} />
+        {vis ? null : <span className="lr-cap lr-remote-session-host" dir="ltr">{label}</span>}
+      </button>
+    </Tooltip>
+    <div ref={panel} id={id} popover="auto" role="dialog" aria-label={t("client.remote.sessionLabel")}
+      className="lr-anchored-card lr-remote-session-card" onToggle={event => {
+        if (event.target === event.currentTarget) setOpen(event.newState === "open");
+      }}>
+      <div className="lr-remote-session-head">
+        <Glyph name="globe" size={18} />
+        <strong dir="ltr">{label}</strong>
+      </div>
+      {fingerprint && <p className="lr-remote-session-fp">
+        <span className={vis ? "visually-hidden" : undefined}>{t("client.remote.fingerprint")}</span>
+        <code dir="ltr">{`${fingerprint.slice(0, 16)}…`}</code>
+      </p>}
+      {pending === "failed" && <p role="alert" className="lr-remote-session-error">{t("gate.connectFailed")}</p>}
+      <div className="lr-remote-session-actions">
+        <Btn icon="arrowLeft" title="client.remote.backToLauncher" cap="client.remote.backToLauncher" size="compact"
+          disabled={pending === "busy"} onClick={returnToRemoteLauncher} />
+        <Btn icon="x" title="client.remote.disconnect" cap="client.remote.disconnect" size="compact" quiet
+          hint="hint-close" busy={pending === "busy"} onClick={() => {
+            setPending("busy");
+            void disconnectRemoteHost().then(() => setPending("idle"), () => setPending("failed"));
+          }} />
+      </div>
+    </div>
+  </>;
+}
+
 export function AppHeader({
   led,
   homeHref = "/",
@@ -218,6 +275,9 @@ export function AppHeader({
   atHome?: boolean;
 }) {
   const { t } = useCopy();
+  const { session, viewRoute } = useRemoteEndpoint();
+  // A remote session owns this origin, so home is its own launcher, not "/".
+  const remote = session !== null && viewRoute.kind !== "launcher";
   return (
     <header className="lr-top">
       {homeHref !== "/client" && <a
@@ -225,6 +285,11 @@ export function AppHeader({
         href={withBrowserDebug(homeHref)}
         aria-label={t("brand.home")}
         aria-current={atHome ? "page" : undefined}
+        onClick={remote ? (event) => {
+          event.preventDefault();
+          if (session?.roomCreation) navigateAppRoute("/");
+          else returnToRemoteLauncher();
+        } : undefined}
       >
         {!atHome && <Glyph name="chevron" size={14} className="lr-home-arrow" />}
         <BrandMark size={34} motion="once" />
@@ -232,7 +297,7 @@ export function AppHeader({
       <div className="lr-top-right">
         {led}
         <HeaderControls diagnosticControl={diagnosticControl}
-          appControl={homeHref !== "/client" ? <AppConnectionButton onConnected={onAppConnected} /> : undefined} />
+          appControl={remote ? <RemoteSessionControl /> : homeHref !== "/client" ? <AppConnectionButton onConnected={onAppConnected} /> : undefined} />
       </div>
     </header>
   );

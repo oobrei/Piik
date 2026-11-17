@@ -123,6 +123,7 @@ import {
   type HostRoomIdentity,
   type HostRoomState,
   mergeAuthenticatedHostRoom,
+  navigateAppRoute,
   readHostRoom,
   releaseHostRoom,
   readPreferredRoomId,
@@ -132,6 +133,7 @@ import {
   writeHostRoom,
   writePreferredRoom,
 } from "../lib/session";
+import { siteHostLabel } from "../lib/remote-endpoint";
 import {
   SignalingClient,
   type SignalingTerminationReason,
@@ -3847,7 +3849,8 @@ export function HostPage({
       setJoinRejectedAttempt(attempt => attempt + 1);
       return;
     }
-    window.location.assign(route);
+    // A remote session shows the room in place instead of leaving the App.
+    navigateAppRoute(route);
   }
 
   const activeCodeEntryPolicy = room?.codeEntryPolicy ?? null;
@@ -4114,7 +4117,7 @@ export function HostPage({
                     style={{ gap: 12 }}
                     onSubmit={joinRoomFromStage}
                   >
-                    {!vis && <span className="lr-cap lr-join-site">{t("join.hint", { site: window.location.host })}</span>}
+                    {!vis && <span className="lr-cap lr-join-site">{t("join.hint", { site: siteHostLabel() })}</span>}
                     <RoomCodeInput value={joinRoomCode} rejectedAttempt={joinRejectedAttempt} autoFocus
                       onChange={value => { setJoinRoomCode(value); setJoinRejectedAttempt(0); }} />
                     <RoomCodeError attempt={joinRejectedAttempt} theme="stage" />

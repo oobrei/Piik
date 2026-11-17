@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,13 +15,27 @@ import (
 	serverconfig "github.com/TNTcraftHIM/Piik/internal/server/config"
 )
 
-const currentVersion = 1
+const (
+	currentVersion = 1
+	// maxRemoteHosts bounds the saved remote host list; the launcher shows a
+	// short list, so an unbounded file is a defect rather than a feature.
+	maxRemoteHosts = 20
+)
 
 type Config struct {
-	Version             int      `json:"version"`
-	LocalAccessPassword string   `json:"localAccessPassword"`
-	Site                string   `json:"site,omitempty"`
-	Sites               []string `json:"sites,omitempty"`
+	Version             int          `json:"version"`
+	LocalAccessPassword string       `json:"localAccessPassword"`
+	Site                string       `json:"site,omitempty"`
+	Sites               []string     `json:"sites,omitempty"`
+	RemoteHosts         []RemoteHost `json:"remoteHosts,omitempty"`
+}
+
+// RemoteHost is one saved remote Piik host. The fingerprint is the pinned
+// certificate, so a saved host reconnects without asking again; passwords and
+// API tokens are never persisted.
+type RemoteHost struct {
+	Origin      string `json:"origin"`
+	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
 // Keep the published single-site field as the first entry. Additional grants
@@ -56,6 +71,58 @@ func NormalizeSites(sites []string) ([]string, error) {
 		}
 	}
 	return normalized, nil
+}
+
+// NormalizeRemoteHost validates one saved host: an HTTP(S) origin plus an
+// optional SHA-256 certificate fingerprint in the published uppercase form.
+func NormalizeRemoteHost(host RemoteHost) (RemoteHost, error) {
+	origin, err := NormalizeSite(host.Origin)
+	if err != nil || origin == "" {
+		return RemoteHost{}, errors.New("remote host must be an HTTP or HTTPS origin")
+	}
+	fingerprint, err := NormalizeFingerprint(host.Fingerprint)
+	if err != nil {
+		return RemoteHost{}, err
+	}
+	return RemoteHost{Origin: origin, Fingerprint: fingerprint}, nil
+}
+
+// NormalizeRemoteHosts validates the saved list, keeping the first entry per
+// origin and rejecting a list longer than the launcher can show.
+func NormalizeRemoteHosts(hosts []RemoteHost) ([]RemoteHost, error) {
+	var normalized []RemoteHost
+	seen := make(map[string]bool, len(hosts))
+	for _, host := range hosts {
+		value, err := NormalizeRemoteHost(host)
+		if err != nil {
+			return nil, err
+		}
+		if seen[value.Origin] {
+			continue
+		}
+		normalized = append(normalized, value)
+		seen[value.Origin] = true
+	}
+	if len(normalized) > maxRemoteHosts {
+		return nil, errors.New("App remote host list is too long")
+	}
+	return normalized, nil
+}
+
+// NormalizeFingerprint accepts a SHA-256 certificate fingerprint with optional
+// colon separators and returns the uppercase hex form tlsconfig publishes.
+func NormalizeFingerprint(value string) (string, error) {
+	fingerprint := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(value), ":", ""))
+	if fingerprint == "" {
+		return "", nil
+	}
+	if len(fingerprint) != 64 {
+		return "", errors.New("remote host fingerprint must be a SHA-256 hex digest")
+	}
+	if _, err := hex.DecodeString(fingerprint); err != nil {
+		return "", errors.New("remote host fingerprint must be a SHA-256 hex digest")
+	}
+	return fingerprint, nil
 }
 
 func DefaultPath() (string, error) {
@@ -180,6 +247,11 @@ func load(path string) (Config, error) {
 		return Config{}, err
 	}
 	config.SetApprovedSites(sites)
+	hosts, err := NormalizeRemoteHosts(config.RemoteHosts)
+	if err != nil {
+		return Config{}, errors.New("App configuration is invalid")
+	}
+	config.RemoteHosts = hosts
 	return config, nil
 }
 
@@ -196,6 +268,11 @@ func encode(config Config) ([]byte, error) {
 		return nil, err
 	}
 	config.SetApprovedSites(sites)
+	hosts, err := NormalizeRemoteHosts(config.RemoteHosts)
+	if err != nil {
+		return nil, err
+	}
+	config.RemoteHosts = hosts
 	payload, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("encode App configuration: %w", err)

@@ -1,5 +1,10 @@
 import { say } from "../ui/copy";
 import {
+  apiPath,
+  remoteInfoSchema,
+  type RemoteInfo,
+} from "./remote-endpoint";
+import {
   createRoomResponseSchema,
   roomAccessUpdateResponseSchema,
   runtimeCapabilitiesSchema,
@@ -15,17 +20,10 @@ export interface SiteAccessStatus {
   authenticated: boolean;
 }
 
-export class ApiError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
-    this.name = "ApiError";
-  }
-}
+import { ApiError } from "./api-error";
+export { ApiError };
 
-async function responseBody(response: Response): Promise<unknown> {
+export async function responseBody(response: Response): Promise<unknown> {
   let body: unknown;
   try {
     body = await response.json();
@@ -61,7 +59,7 @@ function parseSiteAccessStatus(value: unknown): SiteAccessStatus {
 }
 
 export async function getSiteAccess(signal?: AbortSignal): Promise<SiteAccessStatus> {
-  const response = await fetch("/api/site-access", {
+  const response = await fetch(apiPath("/api/site-access"), {
     headers: { Accept: "application/json" },
     cache: "no-store",
     signal,
@@ -81,7 +79,7 @@ export async function getSiteAccess(signal?: AbortSignal): Promise<SiteAccessSta
 }
 
 export async function getRuntimeCapabilities(signal?: AbortSignal): Promise<RuntimeCapabilities> {
-  const response = await fetch("/api/capabilities", {
+  const response = await fetch(apiPath("/api/capabilities"), {
     headers: { Accept: "application/json" },
     signal,
   });
@@ -99,10 +97,31 @@ export async function getRuntimeCapabilities(signal?: AbortSignal): Promise<Runt
   return parsed.data;
 }
 
+/** The host's own description, reachable before any remote session exists. */
+export async function getRemoteInfo(signal?: AbortSignal): Promise<RemoteInfo> {
+  const response = await fetch(apiPath("/api/remote/info"), {
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+    signal,
+  });
+  const body = await responseBody(response);
+  if (!response.ok) {
+    throw new ApiError(
+      say("gate.serviceUnavailable", { status: String(response.status) }),
+      response.status,
+    );
+  }
+  const parsed = remoteInfoSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new ApiError(say("host.err.serverError"), 502);
+  }
+  return parsed.data;
+}
+
 export async function authenticateSiteAccess(
   password: string,
 ): Promise<SiteAccessStatus> {
-  const response = await fetch("/api/site-access", {
+  const response = await fetch(apiPath("/api/site-access"), {
     method: "POST",
     headers: {
       Accept: "application/json",
@@ -129,7 +148,7 @@ export async function createRoom(
   roomPassword: string | null,
   preferredRoomId: string | null = null,
 ): Promise<CreateRoomResponse> {
-  const response = await fetch("/api/rooms", {
+  const response = await fetch(apiPath("/api/rooms"), {
     method: "POST",
     headers: {
       Accept: "application/json",
@@ -168,7 +187,7 @@ export async function replaceOwnedRoom(
   codeEntryPolicy: CodeEntryPolicy,
   roomPassword: string | null,
 ): Promise<CreateRoomResponse> {
-  const response = await fetch(`/api/rooms/${roomId}/replacement`, {
+  const response = await fetch(apiPath(`/api/rooms/${roomId}/replacement`), {
     method: "POST",
     headers: {
       Accept: "application/json",
@@ -203,7 +222,7 @@ export async function updateRoomAccess(
   hostToken: string,
   request: RoomAccessUpdateRequest,
 ): Promise<RoomAccessUpdateResponse> {
-  const response = await fetch(`/api/rooms/${roomId}/access`, {
+  const response = await fetch(apiPath(`/api/rooms/${roomId}/access`), {
     method: "POST",
     headers: {
       Accept: "application/json",

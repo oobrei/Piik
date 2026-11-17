@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/TNTcraftHIM/Piik/internal/server/protocol"
 )
 
 // maxJSONRequestBytes bounds the body every JSON route accepts.
@@ -27,6 +29,28 @@ type healthBody struct {
 type siteAccessBody struct {
 	Required      bool `json:"required"`
 	Authenticated bool `json:"authenticated"`
+}
+
+// remoteInfoBody is the /api/remote/info payload a non-browser client reads
+// before it connects.
+type remoteInfoBody struct {
+	Service            string                       `json:"service"`
+	Protocol           string                       `json:"protocol"`
+	SiteAccessRequired bool                         `json:"siteAccessRequired"`
+	RoomCreation       bool                         `json:"roomCreation"`
+	APIOrigin          string                       `json:"apiOrigin"`
+	CertificateSHA256  string                       `json:"certificateSha256,omitempty"`
+	Capabilities       protocol.RuntimeCapabilities `json:"capabilities"`
+}
+
+// remoteSessionBody is the /api/remote/session payload: the API token and its
+// lifetime, or the fact that site access needs no password.
+type remoteSessionBody struct {
+	Required      bool   `json:"required"`
+	Authenticated bool   `json:"authenticated"`
+	Token         string `json:"token"`
+	ExpiresAtMs   int64  `json:"expiresAtMs"`
+	TTLSeconds    int    `json:"ttlSeconds"`
 }
 
 // sendJSON sets the exact Content-Length and the JSON charset.

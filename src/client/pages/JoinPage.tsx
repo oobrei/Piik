@@ -5,7 +5,8 @@ import { RoomCodeInput, RoomCodeError } from "../components/living/RoomCodeInput
 import { HintComic } from "../components/living/hints";
 import { Glyph } from "../ui/icons";
 import { useCopy } from "../ui/copy";
-import { roomRouteForExplicitEntry } from "../lib/session";
+import { navigateAppRoute, roomRouteForExplicitEntry } from "../lib/session";
+import { siteHostLabel } from "../lib/remote-endpoint";
 
 export function JoinPage() {
   const { t, vis } = useCopy();
@@ -21,7 +22,7 @@ export function JoinPage() {
       setRejectedAttempt((attempt) => attempt + 1);
       return;
     }
-    window.location.assign(route);
+    navigateAppRoute(route);
   }
 
   const goButton = (
@@ -50,7 +51,7 @@ export function JoinPage() {
           {vis ? null : (
             <div className="lr-access-text">
               <h1>{t("join.title")}</h1>
-              <p className="lr-join-site">{t("join.hint", { site: window.location.host })}</p>
+              <p className="lr-join-site">{t("join.hint", { site: siteHostLabel() })}</p>
             </div>
           )}
           <RoomCodeInput value={roomId} rejectedAttempt={rejectedAttempt} autoFocus

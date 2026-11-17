@@ -76,28 +76,22 @@ func (s *Server) route(
 		if !allowMethod(writer, request, http.MethodGet) {
 			return
 		}
-		sendJSON(writer, http.StatusOK, protocol.RuntimeCapabilities{
-			Sfu:                        s.config.SFU != nil,
-			SfuOnly:                    s.config.SFU != nil && s.config.SFU.Only,
-			NatPrediction:              s.config.NATPredictionEnabled && !(s.config.SFU != nil && s.config.SFU.Only),
-			RoomInteractions:           true,
-			RoomVoice:                  true,
-			RoomVoiceListeningPresence: true,
-			RoomVoiceBitrate:           true,
-			RelayVolunteer:             true,
-			RoomRelayCapacity:          true,
-			RoomReactionIDs:            protocol.RoomReactionIDs,
-			RemoteInput:                true,
-			ViewerRouteSelection:       true,
-			AudioPresence:              true,
-			CoPlayPresence:             true,
-			HostRoomSession:            true,
-		})
+		sendJSON(writer, http.StatusOK, s.runtimeCapabilities())
 		return
 	}
 
 	if path == "/api/site-access" {
 		s.handleSiteAccess(writer, request)
+		return
+	}
+
+	if path == "/api/remote/info" {
+		s.handleRemoteInfo(writer, request)
+		return
+	}
+
+	if path == "/api/remote/session" {
+		s.handleRemoteSession(writer, request)
 		return
 	}
 
@@ -207,6 +201,112 @@ func (s *Server) handleSiteAccess(writer http.ResponseWriter, request *http.Requ
 	sendJSON(writer, http.StatusOK, siteAccessBody{Required: true, Authenticated: true})
 }
 
+// runtimeCapabilities is the one owner of the advertised capability set, which
+// /api/capabilities and /api/remote/info both report.
+func (s *Server) runtimeCapabilities() protocol.RuntimeCapabilities {
+	return protocol.RuntimeCapabilities{
+		Sfu:                        s.config.SFU != nil,
+		SfuOnly:                    s.config.SFU != nil && s.config.SFU.Only,
+		NatPrediction:              s.config.NATPredictionEnabled && !(s.config.SFU != nil && s.config.SFU.Only),
+		RoomInteractions:           true,
+		RoomVoice:                  true,
+		RoomVoiceListeningPresence: true,
+		RoomVoiceBitrate:           true,
+		RelayVolunteer:             true,
+		RoomRelayCapacity:          true,
+		RoomReactionIDs:            protocol.RoomReactionIDs,
+		RemoteInput:                true,
+		ViewerRouteSelection:       true,
+		AudioPresence:              true,
+		CoPlayPresence:             true,
+		HostRoomSession:            true,
+	}
+}
+
+// handleRemoteInfo describes the service to a non-browser client: the wire
+// protocol, the access requirement, the API origin, the certificate it may pin
+// and the capabilities it can rely on. Nothing here is secret, so a client that
+// sends no Origin is served; a browser still has to come from a configured one.
+func (s *Server) handleRemoteInfo(writer http.ResponseWriter, request *http.Request) {
+	noStoreJSON(writer)
+	if !allowMethod(writer, request, http.MethodGet) {
+		return
+	}
+	if !s.remoteOriginAllowed(request) {
+		sendJSON(writer, http.StatusForbidden, errorBody{"Origin not allowed"})
+		return
+	}
+	sendJSON(writer, http.StatusOK, remoteInfoBody{
+		Service:            "piik",
+		Protocol:           protocol.SignalingProtocol,
+		SiteAccessRequired: s.siteAccess.required(),
+		RoomCreation:       true,
+		APIOrigin:          config.Origin(s.config.PublicBaseURL),
+		CertificateSHA256:  s.remoteCertificateSHA256,
+		Capabilities:       s.runtimeCapabilities(),
+	})
+}
+
+// handleRemoteSession exchanges the site password for an API token. Browsers
+// keep using the site cookie; the token is for clients that cannot hold one.
+func (s *Server) handleRemoteSession(writer http.ResponseWriter, request *http.Request) {
+	noStoreJSON(writer)
+	if !allowMethod(writer, request, http.MethodPost) {
+		return
+	}
+	if !s.remoteOriginAllowed(request) {
+		sendJSON(writer, http.StatusForbidden, errorBody{"Origin not allowed"})
+		return
+	}
+	access := s.siteAccessForRequest(request)
+	provided, ok := remoteSessionPassword(request)
+	if !ok {
+		sendJSON(writer, http.StatusBadRequest, errorBody{"Invalid remote session request"})
+		return
+	}
+	if !access.required() {
+		sendJSON(writer, http.StatusOK, remoteSessionBody{Authenticated: true})
+		return
+	}
+	if !access.passwordMatches(provided) {
+		writer.Header().Set("WWW-Authenticate", "Bearer")
+		sendJSON(writer, http.StatusUnauthorized, errorBody{"Unauthorized"})
+		return
+	}
+	token, expiresAtMs := access.createAPIToken()
+	sendJSON(writer, http.StatusOK, remoteSessionBody{
+		Required:      true,
+		Authenticated: true,
+		Token:         token,
+		ExpiresAtMs:   expiresAtMs,
+		TTLSeconds:    access.ttlSeconds,
+	})
+}
+
+// remoteSessionPassword reads the password from the Bearer header or, when a
+// body is sent, from its single password field. An absent or empty body is a
+// bodyless request, which only a service without site access can accept.
+func remoteSessionPassword(request *http.Request) (string, bool) {
+	provided := bearerToken(request)
+	if !hasRequestBody(request) {
+		return provided, true
+	}
+	body, err := readJSONBody(request)
+	var fields map[string]json.RawMessage
+	if err != nil || json.Unmarshal(body, &fields) != nil {
+		return "", false
+	}
+	raw, present := fields["password"]
+	if !present {
+		return provided, len(fields) == 0
+	}
+	var password *string
+	if len(fields) != 1 || json.Unmarshal(raw, &password) != nil || password == nil {
+		return "", false
+	}
+	return *password, true
+}
+
 func (s *Server) handleRoomReplacement(
 	writer http.ResponseWriter,
 	request *http.Request,
@@ -299,13 +399,14 @@ func (s *Server) handleRoomCreation(
 	if !allowMethod(writer, request, http.MethodPost) {
 		return
 	}
-	if !s.allowedRequestOrigin(request) {
+	if !s.requestOriginAllowed(request) {
 		sendJSON(writer, http.StatusForbidden, errorBody{"Origin not allowed"})
 		return
 	}
-	// When site access requires a password, room creation uses its cookie;
-	// a `Bearer <site password>` header does not authorize it.
-	if !s.roomCreationAuthorized(request) {
+	// When site access requires a password, room creation uses its cookie or,
+	// for an API client, its API token; a `Bearer <site password>` header does
+	// not authorize it.
+	if !s.roomAuthorized(request, apiClientToken(request)) {
 		sendJSON(writer, http.StatusUnauthorized, errorBody{"Unauthorized"})
 		return
 	}
@@ -342,11 +443,13 @@ func (s *Server) authorizedRoomHostToken(
 	writer http.ResponseWriter,
 	request *http.Request,
 ) (string, bool) {
-	if !s.allowedRequestOrigin(request) {
+	if !s.requestOriginAllowed(request) {
 		sendJSON(writer, http.StatusForbidden, errorBody{"Origin not allowed"})
 		return "", false
 	}
-	if !s.roomCreationAuthorized(request) {
+	// The Bearer credential on these routes is the Host token, so an API client
+	// sends its API token in X-Piik-Api-Token only.
+	if !s.roomAuthorized(request, request.Header.Get("X-Piik-Api-Token")) {
 		sendJSON(writer, http.StatusUnauthorized, errorBody{"Unauthorized"})
 		return "", false
 	}
@@ -374,8 +477,46 @@ func (s *Server) allowedRequestOrigin(request *http.Request) bool {
 	return allowed
 }
 
-func (s *Server) roomCreationAuthorized(request *http.Request) bool {
-	return s.siteAccessForRequest(request).isAuthenticated(cookieHeader(request))
+// apiClientRequest reports a declared non-browser API client: no Origin header
+// and the explicit API header. A browser always sends Origin, so a page cannot
+// present itself this way without failing the Origin rule first.
+func apiClientRequest(request *http.Request) bool {
+	return request.Header.Get("Origin") == "" && request.Header.Get("X-Piik-Api") == "1"
+}
+
+// apiClientToken is the API token header, falling back to the Bearer credential
+// on the routes that carry no Host token of their own.
+func apiClientToken(request *http.Request) string {
+	if token := request.Header.Get("X-Piik-Api-Token"); token != "" {
+		return token
+	}
+	return bearerToken(request)
+}
+
+// requestOriginAllowed accepts a browser request from a configured Origin or a
+// declared API client, which sends no Origin at all.
+func (s *Server) requestOriginAllowed(request *http.Request) bool {
+	return apiClientRequest(request) || s.allowedRequestOrigin(request)
+}
+
+// remoteOriginAllowed accepts the two shapes the API bootstrap routes serve: a
+// client with no Origin header and a browser from a configured Origin. Neither
+// route carries ambient authority, so an absent Origin is not a cross-site
+// request.
+func (s *Server) remoteOriginAllowed(request *http.Request) bool {
+	return request.Header.Get("Origin") == "" || s.allowedRequestOrigin(request)
+}
+
+// roomAuthorized accepts a browser's site cookie or an API client's API token.
+// The caller supplies the token because the Bearer credential means something
+// else per route: a site password on /api/site-access, an API token on
+// /api/rooms, and the Host token on the room routes.
+func (s *Server) roomAuthorized(request *http.Request, apiToken string) bool {
+	access := s.siteAccessForRequest(request)
+	if apiClientRequest(request) {
+		return access.isValidAPIToken(apiToken)
+	}
+	return access.isAuthenticated(cookieHeader(request))
 }
 
 // signal.InviteURL is the one owner of the invite

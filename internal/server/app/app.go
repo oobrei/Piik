@@ -11,9 +11,10 @@
 // The lock order is one-directional: Server.mu may be held while the signaling
 // mutex is taken (reconcile calls signal.New under it, and signal.New locks the
 // server it is still building), never the reverse. Nothing reachable under the
-// signaling mutex may take Server.mu, which is why the one callback this
-// package hands to signal, SiteAccessAtUpgrade, only reads the lock-free
-// site-access gate. Keep it that way or the two locks can deadlock.
+// signaling mutex may take Server.mu, which is why the two callbacks this
+// package hands to signal, SiteAccessAtUpgrade and AllowAPIClient, only read
+// request headers and the lock-free site-access gate. Keep it that way or the
+// two locks can deadlock.
 package app
 
 import (
@@ -68,6 +69,9 @@ type Options struct {
 	MaxSignalConnections                int
 	MaxUnauthenticatedSignalConnections int
 	SiteAccessTTLSeconds                int
+	// RemoteCertificateSHA256 is the TLS certificate fingerprint a non-browser
+	// client pins. Empty advertises no certificate.
+	RemoteCertificateSHA256 string
 
 	// AfterFunc is the signaling timer factory; nil uses time.AfterFunc.
 	AfterFunc func(time.Duration, func()) func() bool
@@ -88,6 +92,8 @@ type Server struct {
 	stopSFUDNS    func()
 	signalOptions signal.Options
 	httpServer    *http.Server
+	// remoteCertificateSHA256 is advertised by /api/remote/info; empty omits it.
+	remoteCertificateSHA256 string
 	// Listen binds unless New received owned listeners. Shutdown waits for
 	// startupDone before reading them; closing before Listen also releases them.
 	listeners []net.Listener
@@ -148,6 +154,7 @@ func New(options Options) (*Server, error) {
 		startupDone: make(chan struct{}),
 		done:        make(chan error, 1),
 	}
+	server.remoteCertificateSHA256 = options.RemoteCertificateSHA256
 	server.listeners = append([]net.Listener(nil), options.Listeners...)
 	if options.Assets != nil {
 		server.frontend = staticHandler(options.Assets, http.HandlerFunc(notFoundJSON))
@@ -161,8 +168,17 @@ func New(options Options) (*Server, error) {
 		NATPredictionEnabled: configuration.NATPredictionEnabled,
 		AllowedOrigins:       configuration.AllowedOrigins,
 		SiteAccessAtUpgrade: func(request *http.Request) bool {
-			return server.siteAccessForRequest(request).isAuthenticated(cookieHeader(request))
+			access := server.siteAccessForRequest(request)
+			// An API client presents its token instead of the browser cookie.
+			if apiClientRequest(request) {
+				return access.isValidAPIToken(apiClientToken(request))
+			}
+			return access.isAuthenticated(cookieHeader(request))
 		},
+		// A browser always sends Origin, so an absent Origin with the API header
+		// is a non-browser client. Signaling still enforces the Origin rule for
+		// every request that has one.
+		AllowAPIClient:                apiClientRequest,
 		PublicBaseURL:                 configuration.PublicBaseURL,
 		Now:                           now,
 		AuthenticationTimeoutMs:       options.AuthenticationTimeoutMs,
