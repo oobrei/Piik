@@ -6,6 +6,7 @@ import {
   RemoteConnectView,
   type RemoteConnectViewProps,
 } from "../src/client/components/living/RemoteConnectCard";
+import { LauncherForm } from "../src/client/components/living/LauncherForm";
 import { RemoteSessionMenu } from "../src/client/components/living/Header";
 import { setCopy } from "../src/client/ui/copy";
 import type {
@@ -175,15 +176,55 @@ describe("remote App connection", () => {
     expect(html).not.toContain(FINGERPRINT);
   });
 
-  it("renders the remote card beside the launcher form, never inside it", () => {
+  it("renders the remote card above room creation without nesting forms", () => {
+    setCopy({ lang: "en", vis: false });
     const source = readFileSync(
       new URL("../src/client/pages/AppLauncherPage.tsx", import.meta.url), "utf8",
     );
-    const stack = source.indexOf('<div className="lr-client-launch-stack">');
-    const formClose = source.indexOf("</LauncherForm>");
-    const card = source.indexOf("<RemoteConnectCard");
-    expect(stack).toBeGreaterThan(-1);
-    expect(formClose).toBeGreaterThan(stack);
-    expect(card).toBeGreaterThan(formClose);
+    expect(source).toContain("beforeRoom={<RemoteConnectCard");
+
+    const html = renderToStaticMarkup(createElement(LauncherForm, {
+      mode: "link",
+      sites: [],
+      startupSite: "",
+      localAccessPassword: "",
+      onModeChange() {},
+      onToggleStartupSite() {},
+      onRemoveSite() {},
+      onLocalAccessPasswordChange() {},
+      onSubmit() {},
+      beforeRoom: createElement(RemoteConnectView, {
+        session: null,
+        remoteHosts: [],
+        state: { kind: "idle" },
+        address: "",
+        passphrase: "",
+        passphraseRef: { current: null },
+        rememberHost: true,
+        needsPassphrase: false,
+        error: null,
+        busy: false,
+        onAddressChange() {},
+        onPassphraseChange() {},
+        onRememberHostChange() {},
+        onSubmit() {},
+        onTrust() {},
+        onCancel() {},
+        onOpen() {},
+        onConnect() {},
+        onConnectSaved() {},
+        onRemoveHost() {},
+        onDisconnect() {},
+      }),
+    }));
+    const ready = html.indexOf("App is ready");
+    const remote = html.indexOf("Remote connection");
+    const room = html.indexOf("Create a room on this device");
+    expect(ready).toBeGreaterThan(-1);
+    expect(remote).toBeGreaterThan(ready);
+    expect(room).toBeGreaterThan(remote);
+
+    const formTokens = [...html.matchAll(/<\/?form\b/g)].map(match => match[0]);
+    expect(formTokens).toEqual(["<form", "</form", "<form", "</form"]);
   });
 });

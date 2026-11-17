@@ -1491,7 +1491,8 @@ body.lr-theater-open .lr-top { visibility: hidden; }
   place-items: center;
   padding: 24px 16px 40px;
 }
-.lr-client-launch-panel {
+.lr-client-launch-panel,
+.lr-client-launch-room {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
@@ -1499,6 +1500,7 @@ body.lr-theater-open .lr-top { visibility: hidden; }
   justify-items: center;
   gap: 20px;
 }
+.lr-client-launch-room { width: 100%; }
 .lr-client-launch-heading { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-bottom: 8px; width: min(380px, 100%); text-align: center; }
 .lr-client-launch-brand { display: flex; align-items: baseline; justify-content: center; gap: 14px; }
 /* The mascot's feet sit at y=29 in its 32-unit canvas; align them to the wordmark baseline. */
@@ -1635,7 +1637,6 @@ body.lr-theater-open .lr-top { visibility: hidden; }
 
 /* ---------- remote App connection ---------- */
 
-.lr-client-launch-stack { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; gap: 16px; width: min(620px, 100%); min-width: 0; }
 .lr-client-remote {
   display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; width: 100%; min-width: 0;
   padding: 12px 20px 16px; border: 1px solid var(--line); border-radius: 22px;
@@ -1790,7 +1791,7 @@ body.lr-theater-open .lr-top { visibility: hidden; }
 
 @media (max-width: 640px) {
   .lr-client-launch { padding: 16px 14px 48px; }
-  .lr-client-launch-panel { gap: 16px; }
+  .lr-client-launch-panel, .lr-client-launch-room { gap: 16px; }
   .lr-client-modes { gap: 8px; }
   .lr-client-mode {
     min-height: 58px;

@@ -362,8 +362,7 @@ export function AppLauncherPage() {
             </div>
           </section>
         ) : (
-          <div className="lr-client-launch-stack">
-            <LauncherForm
+          <LauncherForm
               roomError={error?.kind === "launch" ? <>
                 <Pill icon="alert" tone="bad" label={t("client.launch.error")} alert comic="signal-failed" />
                 {isCopyKey(errorKey) && <p className={vis ? "visually-hidden" : "lr-client-launch-status"}>{t(errorKey)}</p>}
@@ -395,11 +394,10 @@ export function AppLauncherPage() {
               onLocalAccessPasswordChange={setLocalAccessPassword}
               lan={lan && { ...lan, onChange: (selected) => setLan({ ...lan, selected }) }}
               onSubmit={launch}
+              beforeRoom={<RemoteConnectCard remoteHosts={remoteHosts} onRemoteHostsChange={setRemoteHosts} controlPort={controlPort} />}
             >
               {update && <AppReleaseNotice update={update} />}
             </LauncherForm>
-            <RemoteConnectCard remoteHosts={remoteHosts} onRemoteHostsChange={setRemoteHosts} controlPort={controlPort} />
-          </div>
         )}
       </main>
       <footer className="lr-client-footer">

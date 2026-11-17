@@ -55,6 +55,7 @@ export function LauncherForm({
   lan,
   onSubmit,
   children,
+  beforeRoom,
   roomError,
 }: {
   mode: AppMode;
@@ -82,6 +83,7 @@ export function LauncherForm({
   };
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   children?: ReactNode;
+  beforeRoom?: ReactNode;
   roomError?: ReactNode;
 }) {
   const { vis, t } = useCopy();
@@ -121,7 +123,7 @@ export function LauncherForm({
     </label>
   );
   return (
-    <form className="lr-client-launch-panel" onSubmit={onSubmit}>
+    <div className="lr-client-launch-panel">
       <header className="lr-client-launch-heading">
         <div className="lr-client-launch-brand">
           <BrandMark size={52} motion="once" />
@@ -173,10 +175,11 @@ export function LauncherForm({
         <Glyph name="star" size={18} />
         <span className={vis ? "visually-hidden" : undefined}>{t("client.connect.openOwnedOnStart", { mode: t(ownedStartup === "local" ? "client.launch.local" : "client.launch.link") })}</span>
       </label>}
+      {beforeRoom}
       {roomError}
       {target ? <a className="lr-btn is-primary" href={entryURL(target)} onClick={onOpen} aria-label={t("client.launch.go")}>
         <Glyph name="arrowRight" size={19} />{vis ? null : <span className="lr-cap">{t("client.launch.go")}</span>}
-      </a> : <>
+      </a> : <form className="lr-client-launch-room" onSubmit={onSubmit}>
       <p className={vis ? "visually-hidden" : "lr-client-launch-section"}>{t("client.launch.room")}</p>
       <div
         className="lr-client-modes"
@@ -278,7 +281,7 @@ export function LauncherForm({
         hint={MODES.find((choice) => choice.mode === mode)?.comic}
         disabled={mode === "local" && lan !== undefined && !lan.selected}
       />
-      </>}
-    </form>
+      </form>}
+    </div>
   );
 }
