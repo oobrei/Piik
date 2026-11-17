@@ -166,10 +166,10 @@ export function currentLang(): Lang {
 
 // Locale-aware joins for composed notices.
 export function joinSentences(lang: Lang, parts: string[]): string {
-  return parts.join(lang === "zh" ? "；" : "; ");
+  return parts.join(lang === "zh" || lang === "zh-Hant" ? "；" : "; ");
 }
 export function joinItems(lang: Lang, parts: string[]): string {
-  return parts.join(lang === "zh" ? "、" : ", ");
+  return parts.join(lang === "zh" || lang === "zh-Hant" ? "、" : ", ");
 }
 
 export interface Copy {

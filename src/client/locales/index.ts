@@ -1,7 +1,7 @@
 import { en, enPlayful, enTitleFrames } from "./en";
 import { visualTitleFrames } from "./visual";
 import { zh, zhPlayful, zhTitleFrames } from "./zh";
-import { zhHant } from "./zh-Hant";
+import { zhHant, zhHantPlayful, zhHantTitleFrames } from "./zh-Hant";
 import { ja } from "./ja";
 import { ko } from "./ko";
 
@@ -11,8 +11,8 @@ export type { CopyKey, TitleContent, TitleFrameKey, WelcomeEntry } from "./zh";
 export const locales = {
   zh: { name: "简体中文", short: "中", tag: "zh-CN", copy: zh, titleFrames: zhTitleFrames, playful: zhPlayful },
   en: { name: "English", short: "EN", tag: "en", copy: en, titleFrames: enTitleFrames, playful: enPlayful },
+  "zh-Hant": { name: "繁體中文", short: "繁", tag: "zh-Hant", copy: zhHant, titleFrames: zhHantTitleFrames, playful: zhHantPlayful },
   // Partial message catalogs retain the existing English title and playful defaults.
-  "zh-Hant": { name: "繁體中文", short: "繁", tag: "zh-Hant", copy: zhHant, titleFrames: enTitleFrames, playful: enPlayful },
   ja: { name: "日本語", short: "日", tag: "ja", copy: ja, titleFrames: enTitleFrames, playful: enPlayful },
   ko: { name: "한국어", short: "한", tag: "ko", copy: ko, titleFrames: enTitleFrames, playful: enPlayful },
 };

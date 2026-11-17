@@ -57,7 +57,7 @@ export function Couch({
   footerAction,
 }: CouchProps) {
   const { t, vis, lang } = useCopy();
-  const comma = lang === "zh" ? "，" : ", ";
+  const comma = lang === "zh" || lang === "zh-Hant" ? "，" : ", ";
   const [couchRef, containerWidth] = useElementWidth();
   const count = entries.length + (host ? 1 : 0);
   const capacity = Math.max(2, Math.min(8, Math.floor((containerWidth - 64) / 72)));

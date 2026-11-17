@@ -151,7 +151,7 @@ describe("copy catalog", () => {
   it("keeps primary catalogs complete and supplied translations valid", () => {
     const keys = Object.keys(locales.zh.copy) as CopyKey[];
     const placeholders = (value: string) => (value.match(/\{\w+\}/g) ?? []).sort();
-    for (const lang of ["zh", "en"] as const) {
+    for (const lang of ["zh", "en", "zh-Hant"] as const) {
       expect(Object.keys(locales[lang].copy).sort(), lang).toEqual([...keys].sort());
     }
     for (const [lang, locale] of Object.entries(locales)) {
@@ -209,7 +209,15 @@ describe("copy catalog", () => {
     }
   });
 
-  it.each(["zh-Hant", "ja", "ko"] as const)("uses the partial %s catalog with English and visual defaults", lang => {
+  it("provides dedicated Traditional Chinese copy, title frames, and playful lines", () => {
+    expect(t("zh-Hant", "mode.vis")).toBe("純視覺");
+    expect(t("zh-Hant", "client.launch.local")).toBe("本機房間");
+    expect(getTitleFrames("zh-Hant", false, "hostActive")).toBe(locales["zh-Hant"].titleFrames.hostActive);
+    expect(getTitleFrames("zh-Hant", true, "hostActive")).toBe(visualTitleFrames.hostActive);
+    expect(locales["zh-Hant"].playful.welcome[0]?.text).toBe("沙發給你留著呢。");
+  });
+
+  it.each(["ja", "ko"] as const)("uses the partial %s catalog with English and visual defaults", lang => {
     expect(t(lang, "common.copied")).toBe(locales[lang].copy["common.copied"]);
     expect(locales[lang].copy["mode.vis"]).toBeUndefined();
     expect(t(lang, "mode.vis")).toBe(locales.en.copy["mode.vis"]);
@@ -246,7 +254,7 @@ describe("copy catalog", () => {
     const playful = new Set([
       "hostActive", "viewerActive", "hostStarting", "hostReady", "hostIdle", "viewerWaiting",
     ]);
-    for (const catalog of [locales.zh.titleFrames, locales.en.titleFrames, visualTitleFrames]) {
+    for (const catalog of [locales.zh.titleFrames, locales["zh-Hant"].titleFrames, locales.en.titleFrames, visualTitleFrames]) {
       for (const [state, frames] of Object.entries(catalog)) {
         if (!playful.has(state)) expect(frames.variations, state).toEqual([]);
         expect(new Set(frames.variations).size, state).toBe(frames.variations.length);
