@@ -20,6 +20,93 @@ const (
 	remoteProxyPrefix    = remoteclient.ProxyPrefix + "/"
 )
 
+type remoteOpError struct {
+	status  int
+	message string
+	err     error
+}
+
+func (e *remoteOpError) Error() string {
+	if e.err == nil {
+		return e.message
+	}
+	return e.message + ": " + errorDetail(e.err)
+}
+
+func (e *remoteOpError) Unwrap() error { return e.err }
+
+// ProbeRemote parses target and inspects the remote host's certificate and info.
+func (server *Server) ProbeRemote(ctx context.Context, target, acceptedFingerprint string) (remoteclient.ProbeResult, error) {
+	if _, err := remoteclient.ParseDescriptor(target); err != nil {
+		return remoteclient.ProbeResult{}, &remoteOpError{status: http.StatusBadRequest, message: "invalid remote address", err: err}
+	}
+	ctx, cancel := context.WithTimeout(ctx, remoteRequestTimeout)
+	defer cancel()
+	result, err := server.remote.Probe(ctx, target, acceptedFingerprint)
+	if err != nil {
+		return remoteclient.ProbeResult{}, &remoteOpError{status: http.StatusBadGateway, message: "remote host could not be reached", err: err}
+	}
+	return result, nil
+}
+
+// ConnectRemote establishes the single active remote session with the host.
+func (server *Server) ConnectRemote(ctx context.Context, connect remoteclient.ConnectRequest) (remoteclient.SessionStatus, error) {
+	if _, err := remoteclient.ParseDescriptor(connect.Target); err != nil {
+		return remoteclient.SessionStatus{}, &remoteOpError{status: http.StatusBadRequest, message: "invalid remote address", err: err}
+	}
+	ctx, cancel := context.WithTimeout(ctx, remoteRequestTimeout)
+	defer cancel()
+	status, err := server.remote.Connect(ctx, connect)
+	if errors.Is(err, remoteclient.ErrUnauthorized) {
+		return remoteclient.SessionStatus{}, &remoteOpError{status: http.StatusUnauthorized, message: "the remote host rejected the site password", err: err}
+	}
+	if err != nil {
+		return remoteclient.SessionStatus{}, &remoteOpError{status: http.StatusBadGateway, message: "the remote host could not be joined", err: err}
+	}
+	return status, nil
+}
+
+// RemoteStatus returns the current remote session status without secrets.
+func (server *Server) RemoteStatus() remoteclient.SessionStatus {
+	return server.remote.Status()
+}
+
+// DisconnectRemote closes any active remote session and returns the idle status.
+func (server *Server) DisconnectRemote() remoteclient.SessionStatus {
+	server.remote.Disconnect()
+	return server.remote.Status()
+}
+
+// SavedRemoteHosts returns a non-nil copy of the saved remote host list.
+func (server *Server) SavedRemoteHosts() []appconfig.RemoteHost {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	return cloneRemoteHosts(server.remoteHosts)
+}
+
+// SetRemoteHostSaved approves or revokes a saved remote host and returns the
+// complete persisted list even when saving fails.
+func (server *Server) SetRemoteHostSaved(origin, fingerprint string, allowed bool) ([]appconfig.RemoteHost, error) {
+	host, err := appconfig.NormalizeRemoteHost(appconfig.RemoteHost{Origin: origin, Fingerprint: fingerprint})
+	if err != nil {
+		return nil, &remoteOpError{status: http.StatusBadRequest, message: "invalid remote host", err: err}
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if server.changeRemoteHost == nil {
+		return nil, &remoteOpError{status: http.StatusServiceUnavailable, message: "remote host approval is unavailable"}
+	}
+	current, saveErr := server.changeRemoteHost(host, allowed)
+	// The page always shows the list the App actually holds, even when the
+	// save failed and the previous list is still current.
+	server.remoteHosts = current
+	snapshot := cloneRemoteHosts(server.remoteHosts)
+	if saveErr != nil {
+		return snapshot, &remoteOpError{status: http.StatusServiceUnavailable, message: "remote host could not be saved", err: saveErr}
+	}
+	return snapshot, nil
+}
+
 func (server *Server) handleRemoteProbe(response http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodPost {
 		response.Header().Set("Allow", http.MethodPost)
@@ -33,15 +120,9 @@ func (server *Server) handleRemoteProbe(response http.ResponseWriter, request *h
 	if !decodeRemoteRequest(response, request, &probe) {
 		return
 	}
-	if _, err := remoteclient.ParseDescriptor(probe.Target); err != nil {
-		writeRemoteFailure(response, http.StatusBadRequest, "invalid remote address", err)
-		return
-	}
-	ctx, cancel := context.WithTimeout(request.Context(), remoteRequestTimeout)
-	defer cancel()
-	result, err := server.remote.Probe(ctx, probe.Target, probe.AcceptedFingerprint)
+	result, err := server.ProbeRemote(request.Context(), probe.Target, probe.AcceptedFingerprint)
 	if err != nil {
-		writeRemoteFailure(response, http.StatusBadGateway, "remote host could not be reached", err)
+		writeRemoteOpFailure(response, err)
 		return
 	}
 	writeJSON(response, http.StatusOK, result)
@@ -57,19 +138,9 @@ func (server *Server) handleRemoteConnect(response http.ResponseWriter, request 
 	if !decodeRemoteRequest(response, request, &connect) {
 		return
 	}
-	if _, err := remoteclient.ParseDescriptor(connect.Target); err != nil {
-		writeRemoteFailure(response, http.StatusBadRequest, "invalid remote address", err)
-		return
-	}
-	ctx, cancel := context.WithTimeout(request.Context(), remoteRequestTimeout)
-	defer cancel()
-	status, err := server.remote.Connect(ctx, connect)
-	if errors.Is(err, remoteclient.ErrUnauthorized) {
-		writeRemoteFailure(response, http.StatusUnauthorized, "the remote host rejected the site password", err)
-		return
-	}
+	status, err := server.ConnectRemote(request.Context(), connect)
 	if err != nil {
-		writeRemoteFailure(response, http.StatusBadGateway, "the remote host could not be joined", err)
+		writeRemoteOpFailure(response, err)
 		return
 	}
 	writeJSON(response, http.StatusOK, status)
@@ -81,7 +152,7 @@ func (server *Server) handleRemoteStatus(response http.ResponseWriter, request *
 		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	writeJSON(response, http.StatusOK, server.remote.Status())
+	writeJSON(response, http.StatusOK, server.RemoteStatus())
 }
 
 func (server *Server) handleRemoteDisconnect(response http.ResponseWriter, request *http.Request) {
@@ -90,8 +161,7 @@ func (server *Server) handleRemoteDisconnect(response http.ResponseWriter, reque
 		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	server.remote.Disconnect()
-	writeJSON(response, http.StatusOK, server.remote.Status())
+	writeJSON(response, http.StatusOK, server.DisconnectRemote())
 }
 
 func (server *Server) handleRemoteHost(response http.ResponseWriter, request *http.Request) {
@@ -108,31 +178,24 @@ func (server *Server) handleRemoteHost(response http.ResponseWriter, request *ht
 	if !decodeRemoteRequest(response, request, &change) {
 		return
 	}
-	host, err := appconfig.NormalizeRemoteHost(appconfig.RemoteHost{Origin: change.Origin, Fingerprint: change.Fingerprint})
-	if err != nil || change.Allowed == nil {
-		writeRemoteFailure(response, http.StatusBadRequest, "invalid remote host", err)
+	if change.Allowed == nil {
+		writeRemoteFailure(response, http.StatusBadRequest, "invalid remote host", nil)
 		return
 	}
-	server.mu.Lock()
-	defer server.mu.Unlock()
-	result := func() map[string]any {
-		return map[string]any{"remoteHosts": slices.Clone(server.remoteHosts)}
-	}
-	if server.changeRemoteHost == nil {
-		writeRemoteFailure(response, http.StatusServiceUnavailable, "remote host approval is unavailable", nil)
-		return
-	}
-	current, err := server.changeRemoteHost(host, *change.Allowed)
-	// The page always shows the list the App actually holds, even when the
-	// save failed and the previous list is still current.
-	server.remoteHosts = current
+	hosts, err := server.SetRemoteHostSaved(change.Origin, change.Fingerprint, *change.Allowed)
 	if err != nil {
-		failure := result()
-		failure["detail"] = errorDetail(err)
-		writeJSON(response, http.StatusServiceUnavailable, failure)
+		var opErr *remoteOpError
+		if errors.As(err, &opErr) && opErr.status == http.StatusServiceUnavailable && hosts != nil {
+			writeJSON(response, http.StatusServiceUnavailable, map[string]any{
+				"remoteHosts": hosts,
+				"detail":      errorDetail(opErr.Unwrap()),
+			})
+			return
+		}
+		writeRemoteOpFailure(response, err)
 		return
 	}
-	writeJSON(response, http.StatusOK, result())
+	writeJSON(response, http.StatusOK, map[string]any{"remoteHosts": hosts})
 }
 
 func (server *Server) handleRemoteProxy(response http.ResponseWriter, request *http.Request) {
@@ -152,6 +215,29 @@ func decodeRemoteRequest(response http.ResponseWriter, request *http.Request, ta
 		return false
 	}
 	return true
+}
+
+func cloneSites(sites []string) []string {
+	if len(sites) == 0 {
+		return []string{}
+	}
+	return slices.Clone(sites)
+}
+
+func cloneRemoteHosts(hosts []appconfig.RemoteHost) []appconfig.RemoteHost {
+	if len(hosts) == 0 {
+		return []appconfig.RemoteHost{}
+	}
+	return slices.Clone(hosts)
+}
+
+func writeRemoteOpFailure(response http.ResponseWriter, err error) {
+	var opErr *remoteOpError
+	if errors.As(err, &opErr) {
+		writeRemoteFailure(response, opErr.status, opErr.message, opErr.Unwrap())
+		return
+	}
+	writeRemoteFailure(response, http.StatusInternalServerError, "remote operation failed", err)
 }
 
 func writeRemoteFailure(response http.ResponseWriter, status int, message string, err error) {

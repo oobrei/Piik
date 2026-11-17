@@ -50,7 +50,7 @@
     "@types/ws": "8.18.1",
     "@vitejs/plugin-react": "6.0.5",
     "esbuild": "0.28.2",
-    "mygo-cli": "^0.9.1",
+    "mygo-cli": "^0.9.2",
     "qrcode.react": "4.2.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
@@ -64,6 +64,6 @@
     "zod": "4.6.6"
   },
   "dependencies": {
-    "mygo-runtime": "^0.9.1"
+    "mygo-runtime": "^0.9.2"
   }
 }

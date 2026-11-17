@@ -23,7 +23,7 @@ const launcherStateSchema = z.object({
   startupSite: z.string(),
   ownedSites: z.array(z.string()).default([]),
   // The launcher owns this list, so the page parses it without another owner.
-  remoteHosts: z.array(z.object({ origin: z.string(), fingerprint: z.string().optional() })).default([]),
+  remoteHosts: z.array(z.object({ origin: z.string(), fingerprint: z.string().optional() })).nullish().transform(hosts => hosts ?? []),
   startupMode: z.enum(["local", "link", ""]).nullish(),
   localAccessPassword: z.string(),
   defaultMode: z.enum(["local", "link"]),

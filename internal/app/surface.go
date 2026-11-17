@@ -42,11 +42,11 @@ type surface interface {
 
 // newSurface returns the window surface, or the headless one when the App runs
 // for automation. cancel stops the App when the user closes the window.
-func newSurface(headless bool, cancel context.CancelFunc) surface {
+func newSurface(headless bool, cancel context.CancelFunc, services map[string]any) surface {
 	if headless {
 		return &headlessSurface{}
 	}
-	return &windowSurface{window: window.New(window.Options{Title: "Piik App"}, cancel)}
+	return &windowSurface{window: window.New(window.Options{Title: "Piik App", Services: services}, cancel)}
 }
 
 // windowSurface presents the App in its mygo window.

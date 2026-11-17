@@ -334,4 +334,80 @@ describe("remote bridge calls", () => {
       allowed: true,
     });
   });
+
+  it("normalizes null remoteHosts to an empty list", async () => {
+    browser();
+    stubFetch([{ remoteHosts: null }]);
+    const endpoint = await endpointModule();
+
+    await expect(endpoint.setRemoteHostSaved("https://host.example", FINGERPRINT, false)).resolves.toEqual([]);
+  });
+
+  it("uses mygo native IPC when running inside a MyGo window", async () => {
+    browser();
+    const fetchSpy = vi.fn(() => {
+      throw new Error("fetch should not be called inside a MyGo window");
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    const dispatchIPC = async (method: string) => {
+      if (method === "Remote.Probe") {
+        return {
+          origin: "https://host.example",
+          hostLabel: "host.example",
+          tlsStatus: "trusted",
+          certificateSha256: FINGERPRINT,
+          info: { service: "piik", siteAccessRequired: true, roomCreation: true },
+        };
+      }
+      if (method === "Remote.Connect" || method === "Remote.Status") return CONNECTED;
+      if (method === "Remote.Disconnect") return { connected: false };
+      if (method === "Remote.SetSavedHost") return [{ origin: "https://host.example", fingerprint: FINGERPRINT }];
+      return null;
+    };
+    const callSpy = vi.fn(dispatchIPC);
+    const callWithSpy = vi.fn(dispatchIPC);
+    vi.stubGlobal("mygo", { call: callSpy, callWith: callWithSpy });
+    const endpoint = await endpointModule();
+    const { ApiError } = await import("../src/client/lib/api");
+
+    const controller = new AbortController();
+    const probed = await endpoint.probeRemoteHost("host.example", FINGERPRINT, controller.signal);
+    expect(probed.origin).toBe("https://host.example");
+    expect(callWithSpy).toHaveBeenCalledWith(
+      "Remote.Probe",
+      [{ target: "host.example", acceptedFingerprint: FINGERPRINT }],
+      { signal: controller.signal },
+    );
+
+    await expect(endpoint.connectRemoteHost({ target: "host.example", sitePassword: "ok" })).resolves.toMatchObject({
+      connected: true,
+      origin: "https://host.example",
+    });
+    expect(endpoint.getRemoteEndpoint().session?.origin).toBe("https://host.example");
+
+    await expect(endpoint.fetchRemoteStatus()).resolves.toMatchObject({ connected: true });
+    await expect(endpoint.setRemoteHostSaved("https://host.example", FINGERPRINT, true)).resolves.toEqual([
+      { origin: "https://host.example", fingerprint: FINGERPRINT },
+    ]);
+
+    callSpy.mockImplementationOnce(async () => {
+      const err = new Error("[status=401] the remote host rejected the site password");
+      err.name = "CallError";
+      throw err;
+    });
+    await expect(endpoint.connectRemoteHost({ target: "host.example", sitePassword: "bad" }))
+      .rejects.toBeInstanceOf(ApiError);
+    callSpy.mockImplementationOnce(async () => {
+      const err = new Error("[status=401] the remote host rejected the site password");
+      err.name = "CallError";
+      throw err;
+    });
+    await expect(endpoint.connectRemoteHost({ target: "host.example", sitePassword: "bad" }))
+      .rejects.toMatchObject({ status: 401 });
+
+    await endpoint.disconnectRemoteHost();
+    expect(callSpy).toHaveBeenCalledWith("Remote.Disconnect");
+    expect(endpoint.getRemoteEndpoint().session).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 });

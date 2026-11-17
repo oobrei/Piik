@@ -64,16 +64,18 @@ type Options struct {
 	localReady     func(string, string)
 	// surface presents the App's own pages. It is the mygo window, or a
 	// recorder when the App runs headless for packaging and gates.
-	surface surface
-	machine bool
-	logger  *slog.Logger
+	surface       surface
+	remoteService *launcher.RemoteService
+	machine       bool
+	logger        *slog.Logger
 }
 
 func Run(ctx context.Context, options Options) (returnedErr error) {
 	ctx, cancel := context.WithCancel(ctx)
 	options.Debug = options.Debug || debugEnabled(os.Getenv("PIIK_DEBUG"))
 	options.machine = options.DisableBrowser
-	options.surface = newSurface(options.machine, cancel)
+	options.remoteService = launcher.NewRemoteService()
+	options.surface = newSurface(options.machine, cancel, map[string]any{"Remote": options.remoteService})
 	var recorder *diagnostics.Recorder
 	var diagnosticsMu sync.Mutex
 	var restoreLogger func()
@@ -336,6 +338,10 @@ func runLauncher(
 	)
 	if err != nil {
 		return errors.Join(failure.Launcher, err)
+	}
+	if options.remoteService != nil {
+		options.remoteService.Attach(launch)
+		defer options.remoteService.Detach()
 	}
 	defer func() { returnedErr = errors.Join(returnedErr, launch.Close()) }()
 	control.SetConnectURL(launch.URL())

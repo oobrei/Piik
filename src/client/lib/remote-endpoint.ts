@@ -1,3 +1,4 @@
+import { call, callWith, isCallError, isMyGo } from "mygo-runtime";
 import { useSyncExternalStore } from "react";
 import { z } from "zod";
 import { runtimeCapabilitiesSchema } from "../../shared/protocol";
@@ -58,7 +59,8 @@ export const remoteHostSchema = z.object({
 });
 export type RemoteHost = z.infer<typeof remoteHostSchema>;
 
-const remoteHostsSchema = z.object({ remoteHosts: z.array(remoteHostSchema).default([]) });
+const remoteHostListSchema = z.array(remoteHostSchema).nullish().transform(hosts => hosts ?? []);
+const remoteHostsSchema = z.object({ remoteHosts: remoteHostListSchema });
 
 /** Which surface the launcher page shows while a remote session is active. */
 export type RemoteViewRoute =
@@ -248,10 +250,13 @@ export async function probeRemoteHost(
   acceptedFingerprint?: string,
   signal?: AbortSignal,
 ): Promise<RemoteProbeResult> {
-  const body = await postRemoteJSON(`${REMOTE_CLIENT_API}/probe`, {
+  const payload = {
     target,
     ...(acceptedFingerprint ? { acceptedFingerprint } : {}),
-  }, signal);
+  };
+  const body = isMyGo()
+    ? await callRemoteIPC("Remote.Probe", [payload], signal)
+    : await postRemoteJSON(`${REMOTE_CLIENT_API}/probe`, payload, signal);
   const parsed = remoteProbeResultSchema.safeParse(body);
   if (!parsed.success) throw new ApiError(say("host.err.serverError"), 502);
   return parsed.data;
@@ -261,18 +266,23 @@ export async function connectRemoteHost(
   request: { target: string; acceptedFingerprint?: string; sitePassword?: string },
   signal?: AbortSignal,
 ): Promise<RemoteSessionStatus> {
-  const body = await postRemoteJSON(`${REMOTE_CLIENT_API}/connect`, {
+  const payload = {
     target: request.target,
     ...(request.acceptedFingerprint ? { acceptedFingerprint: request.acceptedFingerprint } : {}),
     ...(request.sitePassword ? { sitePassword: request.sitePassword } : {}),
-  }, signal);
+  };
+  const body = isMyGo()
+    ? await callRemoteIPC("Remote.Connect", [payload], signal)
+    : await postRemoteJSON(`${REMOTE_CLIENT_API}/connect`, payload, signal);
   const status = parseRemoteSessionStatus(body);
   setRemoteSession(status.connected ? status : null);
   return status;
 }
 
 export async function fetchRemoteStatus(signal?: AbortSignal): Promise<RemoteSessionStatus> {
-  const body = await getRemoteJSON(`${REMOTE_CLIENT_API}/status`, signal);
+  const body = isMyGo()
+    ? await callRemoteIPC("Remote.Status", [], signal)
+    : await getRemoteJSON(`${REMOTE_CLIENT_API}/status`, signal);
   const status = parseRemoteSessionStatus(body);
   setRemoteSession(status.connected ? status : null);
   // A session the App no longer holds cannot own a remote route.
@@ -281,7 +291,11 @@ export async function fetchRemoteStatus(signal?: AbortSignal): Promise<RemoteSes
 }
 
 export async function disconnectRemoteHost(): Promise<void> {
-  await postRemoteJSON(`${REMOTE_CLIENT_API}/disconnect`, {});
+  if (isMyGo()) {
+    await callRemoteIPC("Remote.Disconnect", []);
+  } else {
+    await postRemoteJSON(`${REMOTE_CLIENT_API}/disconnect`, {});
+  }
   setRemoteSession(null);
   clearRemoteViewRoute();
 }
@@ -291,6 +305,12 @@ export async function setRemoteHostSaved(
   fingerprint: string,
   allowed: boolean,
 ): Promise<RemoteHost[]> {
+  if (isMyGo()) {
+    const body = await callRemoteIPC("Remote.SetSavedHost", [{ origin, fingerprint, allowed }]);
+    const parsed = remoteHostListSchema.safeParse(body);
+    if (!parsed.success) throw new ApiError(say("host.err.serverError"), 502);
+    return parsed.data;
+  }
   const body = await postRemoteJSON(`${REMOTE_CLIENT_API}/host`, { origin, fingerprint, allowed });
   const parsed = remoteHostsSchema.safeParse(body);
   if (!parsed.success) throw new ApiError(say("host.err.serverError"), 502);
@@ -338,6 +358,20 @@ async function remoteJSON(path: string, init: RequestInit, signal?: AbortSignal)
     return await response.json();
   } catch {
     throw new ApiError(say("host.err.serverError"), response.status);
+  }
+}
+
+async function callRemoteIPC(method: string, args: unknown[], signal?: AbortSignal): Promise<unknown> {
+  try {
+    return signal ? await callWith(method, args, { signal }) : await call(method, ...args);
+  } catch (err) {
+    if (signal?.aborted || (err instanceof Error && err.name === "AbortError")) throw err;
+    if (isCallError(err)) {
+      const match = /^\[status=(\d+)\]/.exec(err.message);
+      const status = match ? Number(match[1]) : 502;
+      throw new ApiError(remoteFailureMessage(status), status);
+    }
+    throw new ApiError(say("host.err.serverError"), 502);
   }
 }
 

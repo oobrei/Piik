@@ -11,7 +11,7 @@ require (
 	github.com/bluenviron/mediacommon/v2 v2.9.5
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/coder/websocket v1.8.15
-	github.com/egoist/mygo v0.9.1
+	github.com/egoist/mygo v0.9.2
 	github.com/go-logr/logr v1.4.4
 	github.com/klauspost/compress v1.20.4
 	github.com/livekit/livekit-server v1.13.11-0.20261016133420-cde3991916cf

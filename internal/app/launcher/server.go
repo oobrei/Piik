@@ -388,7 +388,7 @@ func (server *Server) handleState(response http.ResponseWriter, request *http.Re
 		starting = !attempt.completed
 	}
 	state := map[string]any{
-		"sites":               slices.Clone(server.sites),
+		"sites":               cloneSites(server.sites),
 		"startupSite":         server.startupOrigin(),
 		"ownedSites":          server.ownedOrigins(),
 		"startupMode":         server.startupMode(),
@@ -401,7 +401,7 @@ func (server *Server) handleState(response http.ResponseWriter, request *http.Re
 		"starting":            starting,
 		"detail":              errorDetail(resultErr),
 		"reason":              failure.Of(resultErr),
-		"remoteHosts":         slices.Clone(server.remoteHosts),
+		"remoteHosts":         cloneRemoteHosts(server.remoteHosts),
 		"lan":                 map[string]any{"addresses": addresses, "selected": selected},
 		"modes": func() []Mode {
 			if len(server.modes) > 0 {

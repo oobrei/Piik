@@ -43,6 +43,14 @@ func TestLauncherRemoteEndpoints(t *testing.T) {
 	t.Cleanup(func() { _ = server.Close() })
 	origin := strings.TrimSuffix(server.URL(), "/client")
 
+	// Startup launcher state must encode an empty remoteHosts list as [] (never null).
+	initialStateResponse := remoteDo(t, http.MethodGet, origin+"/api/client-launcher", "")
+	initialStateBody, err := io.ReadAll(initialStateResponse.Body)
+	initialStateResponse.Body.Close()
+	if err != nil || initialStateResponse.StatusCode != http.StatusOK || !strings.Contains(string(initialStateBody), `"remoteHosts":[]`) {
+		t.Fatalf("initial launcher state = %d, %q, err=%v", initialStateResponse.StatusCode, string(initialStateBody), err)
+	}
+
 	var status remoteclient.SessionStatus
 	response := remoteDo(t, http.MethodGet, origin+"/api/client-remote/status", "")
 	decodeRemoteResponse(t, response, &status)
@@ -170,6 +178,14 @@ func TestLauncherRemoteEndpoints(t *testing.T) {
 		t.Fatalf("launcher state hosts = %+v", state.RemoteHosts)
 	}
 
+	revokeResponse := remoteDo(t, http.MethodPost, origin+"/api/client-remote/host",
+		`{"origin":"`+host.server.URL+`","allowed":false}`)
+	revokeBody, err := io.ReadAll(revokeResponse.Body)
+	revokeResponse.Body.Close()
+	if err != nil || revokeResponse.StatusCode != http.StatusOK || !strings.Contains(string(revokeBody), `"remoteHosts":[]`) {
+		t.Fatalf("revoke remote host = %d, %q, err=%v", revokeResponse.StatusCode, string(revokeBody), err)
+	}
+
 	response = remoteDo(t, http.MethodPost, origin+"/api/client-remote/disconnect", `{}`)
 	status = remoteclient.SessionStatus{}
 	decodeRemoteResponse(t, response, &status)
@@ -181,6 +197,90 @@ func TestLauncherRemoteEndpoints(t *testing.T) {
 	}
 	if server.remote.Status().Connected {
 		t.Fatal("launcher close kept the remote session")
+	}
+}
+
+func TestRemoteServiceIPC(t *testing.T) {
+	host := startRemoteFixture(t)
+	service := NewRemoteService()
+	if _, err := service.Status(); err == nil || !strings.Contains(err.Error(), "[status=503]") {
+		t.Fatalf("detached status err = %v", err)
+	}
+
+	var savedMu sync.Mutex
+	var saved []appconfig.RemoteHost
+	server, err := Start(t.Context(), appAssets(), Options{
+		Version: "development",
+		ChangeRemoteHost: func(change appconfig.RemoteHost, allowed bool) ([]appconfig.RemoteHost, error) {
+			savedMu.Lock()
+			defer savedMu.Unlock()
+			saved = slices.DeleteFunc(saved, func(value appconfig.RemoteHost) bool { return value.Origin == change.Origin })
+			if allowed {
+				saved = append(saved, change)
+			}
+			return saved, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	service.Attach(server)
+	t.Cleanup(service.Detach)
+
+	hosts, err := service.SavedHosts()
+	if err != nil || hosts == nil || len(hosts) != 0 {
+		t.Fatalf("initial SavedHosts = %#v, %v", hosts, err)
+	}
+	status, err := service.Status()
+	if err != nil || status.Connected {
+		t.Fatalf("initial Status = %+v, %v", status, err)
+	}
+	probe, err := service.Probe(t.Context(), RemoteProbeRequest{Target: host.server.URL})
+	if err != nil || probe.TLSStatus != remoteclient.TLSStatusUntrusted || probe.CertificateSHA256 != host.fingerprint {
+		t.Fatalf("Probe = %+v, %v", probe, err)
+	}
+	trustedProbe, err := service.Probe(t.Context(), RemoteProbeRequest{Target: host.server.URL, AcceptedFingerprint: probe.CertificateSHA256})
+	if err != nil || trustedProbe.TLSStatus != remoteclient.TLSStatusTrusted || trustedProbe.Info.Service != "piik" {
+		t.Fatalf("trusted Probe = %+v, %v", trustedProbe, err)
+	}
+	if _, err := service.Connect(t.Context(), remoteclient.ConnectRequest{
+		Target:              host.server.URL,
+		AcceptedFingerprint: probe.CertificateSHA256,
+		SitePassword:        "wrong",
+	}); err == nil || !strings.Contains(err.Error(), "[status=401]") {
+		t.Fatalf("wrong password err = %v", err)
+	}
+	connected, err := service.Connect(t.Context(), remoteclient.ConnectRequest{
+		Target:              host.server.URL,
+		AcceptedFingerprint: probe.CertificateSHA256,
+		SitePassword:        "site-password",
+	})
+	if err != nil || !connected.Connected || connected.Origin != host.server.URL {
+		t.Fatalf("Connect = %+v, %v", connected, err)
+	}
+	added, err := service.SetSavedHost(RemoteHostSaveRequest{
+		Origin:      host.server.URL,
+		Fingerprint: strings.ToLower(host.fingerprint),
+		Allowed:     true,
+	})
+	if err != nil || len(added) != 1 || added[0].Fingerprint != host.fingerprint {
+		t.Fatalf("SetSavedHost(true) = %+v, %v", added, err)
+	}
+	revoked, err := service.SetSavedHost(RemoteHostSaveRequest{
+		Origin:  host.server.URL,
+		Allowed: false,
+	})
+	if err != nil || revoked == nil || len(revoked) != 0 {
+		t.Fatalf("SetSavedHost(false) = %#v, %v", revoked, err)
+	}
+	disconnected, err := service.Disconnect()
+	if err != nil || disconnected.Connected {
+		t.Fatalf("Disconnect = %+v, %v", disconnected, err)
+	}
+	service.Detach()
+	if _, err := service.Status(); err == nil || !strings.Contains(err.Error(), "[status=503]") {
+		t.Fatalf("post-detach status err = %v", err)
 	}
 }
 

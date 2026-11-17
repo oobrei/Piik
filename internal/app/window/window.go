@@ -7,7 +7,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 
@@ -24,6 +26,7 @@ type Options struct {
 	MinWidth        int
 	MinHeight       int
 	BackgroundColor string
+	Services        map[string]any
 }
 
 const (
@@ -135,6 +138,11 @@ func (w *Window) Run(ctx context.Context) error {
 	// same AGC2 and DFSMN code the rest of Piik uses, with no second
 	// implementation in the Browser.
 	mygo.Bind(voice.NewService())
+	for _, name := range slices.Sorted(maps.Keys(w.options.Services)) {
+		if service := w.options.Services[name]; service != nil {
+			mygo.BindAs(name, service)
+		}
+	}
 	mygo.App.WhenReady(w.create)
 	go func() {
 		<-ctx.Done()
