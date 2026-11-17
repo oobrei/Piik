@@ -1,6 +1,12 @@
 // Locale selection and persistence. Catalog content lives in ../locales.
 import { useSyncExternalStore } from "react";
 import {
+  call,
+  isMyGo,
+  locale as mygoLocale,
+  onLocaleChange as onMyGoLocaleChange,
+} from "mygo-runtime";
+import {
   locales,
   isLang,
   resolveLang,
@@ -35,10 +41,18 @@ function readStored(): Partial<CopyPrefs> {
   }
 }
 
+function systemLanguage(): string | undefined {
+  if (isMyGo()) {
+    const tag = mygoLocale();
+    if (tag) return tag;
+  }
+  return typeof navigator === "undefined" ? undefined : navigator.language;
+}
+
 const stored = readStored();
 let explicit = Object.keys(stored).length > 0;
 const state: CopyPrefs = {
-  lang: resolveLang(typeof navigator === "undefined" ? undefined : navigator.language),
+  lang: resolveLang(systemLanguage()),
   vis: false,
   ...stored,
 };
@@ -71,6 +85,9 @@ function commit(next: Partial<CopyPrefs>): void {
   } catch {
     // Restricted storage only disables persistence.
   }
+  if (next.lang !== undefined && isMyGo()) {
+    void call("Locale.Set", locales[state.lang].tag).catch(() => undefined);
+  }
 }
 
 // Cross-tab sync: a commit in another tab re-applies the persisted values
@@ -84,6 +101,18 @@ if (typeof window !== "undefined" && typeof window.addEventListener === "functio
       apply(stored);
     }
   });
+}
+
+if (isMyGo()) {
+  try {
+    onMyGoLocaleChange((nextLocale) => {
+      if (!explicit && nextLocale) {
+        apply({ lang: resolveLang(nextLocale) });
+      }
+    });
+  } catch {
+    // Ignore when running against a minimal stubbed mygo object.
+  }
 }
 
 // Non-React setter for local choices and product previews.

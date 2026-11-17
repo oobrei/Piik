@@ -16,6 +16,10 @@ import (
 	"github.com/TNTcraftHIM/Piik/internal/app/voice"
 	"github.com/TNTcraftHIM/Piik/internal/diagnostics"
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/i18n"
+	_ "github.com/egoist/mygo/locales/ja"
+	_ "github.com/egoist/mygo/locales/zh-Hans"
+	_ "github.com/egoist/mygo/locales/zh-Hant"
 )
 
 // Options describes the App window. Zero values fall back to the defaults
@@ -41,6 +45,39 @@ const (
 	// StateKey persists the window's geometry across launches.
 	stateKey = "piik-app"
 )
+
+// supportedLanguages declares the web UI languages (fallback first) so mygo
+// resolves the OS display language into navigator.language and mygo.locale.
+var supportedLanguages = []string{"en", "zh-Hans", "zh-Hant", "ja", "ko"}
+
+// LocaleService persists explicit UI language choices through mygo across
+// launches, since the launcher's ephemeral loopback port changes its origin.
+type LocaleService struct{}
+
+// Set persists the user's chosen UI language (or "" to follow the OS again).
+func (LocaleService) Set(tag string) error {
+	matched, err := matchSupportedLanguage(tag)
+	if err != nil {
+		return err
+	}
+	mygo.App.SetLocale(matched)
+	return nil
+}
+
+func matchSupportedLanguage(tag string) (string, error) {
+	trimmed := strings.TrimSpace(tag)
+	if trimmed == "" {
+		return "", nil
+	}
+	if i18n.Normalize(trimmed) == "" {
+		return "", errors.New("invalid language tag")
+	}
+	matched := i18n.Match([]string{trimmed}, supportedLanguages)
+	if matched == "" {
+		return "", errors.New("unsupported language")
+	}
+	return matched, nil
+}
 
 // Window is the single App window. Open may be called from any goroutine,
 // including before the mygo application is ready; Run owns the event loop and
@@ -134,10 +171,12 @@ func Owned(target string) bool {
 // process.
 func (w *Window) Run(ctx context.Context) error {
 	mygo.App.SetName(w.options.Title)
+	mygo.App.SetLanguages(supportedLanguages...)
 	// The room-voice chain is native Go bound to the page: the App runs the
 	// same AGC2 and DFSMN code the rest of Piik uses, with no second
 	// implementation in the Browser.
 	mygo.Bind(voice.NewService())
+	mygo.BindAs("Locale", LocaleService{})
 	for _, name := range slices.Sorted(maps.Keys(w.options.Services)) {
 		if service := w.options.Services[name]; service != nil {
 			mygo.BindAs(name, service)

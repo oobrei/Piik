@@ -88,6 +88,51 @@ describe("copy catalog", () => {
     expect(renderToStaticMarkup(createElement(Selection))).toBe(expected);
   });
 
+  it.each([
+    ["zh-Hans", "zh:false"],
+    ["zh-Hant", "zh-Hant:false"],
+    ["ja", "ja:false"],
+    ["ko", "ko:false"],
+    ["en", "en:false"],
+  ])("prefers mygo.locale (%s) over navigator.language and follows OS locale changes until explicit choice", async (mygoTag, expected) => {
+    vi.resetModules();
+    let localeListener: ((payload: { locale: string; dir: string }) => void) | undefined;
+    const callSpy = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { language: "en-US" });
+    vi.stubGlobal("mygo", {
+      locale: mygoTag,
+      dir: "ltr",
+      call: callSpy,
+      on: (name: string, listener: (payload: { locale: string; dir: string }) => void) => {
+        if (name === "mygo:locale") localeListener = listener;
+        return () => {
+          localeListener = undefined;
+        };
+      },
+    });
+    const [{ currentLang, setCopy, useCopy }, { createElement }, { renderToStaticMarkup }] = await Promise.all([
+      import("../src/client/ui/copy.ts"),
+      import("react"),
+      import("react-dom/server"),
+    ]);
+    function Selection() {
+      const { lang, vis } = useCopy();
+      return `${lang}:${vis}`;
+    }
+    expect(renderToStaticMarkup(createElement(Selection))).toBe(expected);
+
+    localeListener?.({ locale: "ja", dir: "ltr" });
+    expect(currentLang()).toBe("ja");
+
+    setCopy({ vis: true });
+    expect(callSpy).not.toHaveBeenCalled();
+
+    setCopy({ lang: "en" });
+    expect(callSpy).toHaveBeenCalledWith("Locale.Set", "en");
+    localeListener?.({ locale: "ko", dir: "ltr" });
+    expect(currentLang()).toBe("en");
+  });
+
   it("renders zh and en for every key", () => {
     const zh = t("zh", "join.title");
     expect(zh).toBe("加入房间");
