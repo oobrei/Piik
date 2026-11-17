@@ -1,27 +1,8 @@
 package vad
 
 import (
-	"encoding/binary"
-	"math"
-	"os"
 	"testing"
 )
-
-func readFloats(t *testing.T, path string, count int) []float64 {
-	t.Helper()
-	payload, err := os.ReadFile(path)
-	if err != nil {
-		t.Skipf("fixture %s unavailable: %v", path, err)
-	}
-	if len(payload) < count*4 {
-		t.Fatalf("%s holds %d bytes, want %d", path, len(payload), count*4)
-	}
-	values := make([]float64, count)
-	for index := range values {
-		values[index] = float64(math.Float32frombits(binary.LittleEndian.Uint32(payload[index*4:])))
-	}
-	return values
-}
 
 // The generated weight table must match the one WebRTC hard-codes.
 func TestBandWeightsMatchReference(t *testing.T) {
