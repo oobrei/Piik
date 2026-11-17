@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -687,4 +688,53 @@ func siteList(site string) []string {
 		return []string{}
 	}
 	return []string{site}
+}
+
+type stubPortListener struct {
+	port   int
+	closed bool
+}
+
+func (l *stubPortListener) Accept() (net.Conn, error) { return nil, errors.New("closed") }
+func (l *stubPortListener) Close() error              { l.closed = true; return nil }
+func (l *stubPortListener) Addr() net.Addr {
+	return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: l.port}
+}
+
+func TestListenSafeLoopbackSkipsBrowserRestrictedPorts(t *testing.T) {
+	ports := []int{4045, 5060, 6667, 49152}
+	var created []*stubPortListener
+	listener, err := listenSafeLoopbackWith(func(address string) (net.Listener, error) {
+		if address != "127.0.0.1:0" {
+			t.Fatalf("unexpected listen address %q", address)
+		}
+		if len(created) >= len(ports) {
+			t.Fatal("exceeded expected listen attempts")
+		}
+		for _, prev := range created {
+			if prev.closed {
+				t.Fatalf("unsafe port %d was closed before next bind", prev.port)
+			}
+		}
+		item := &stubPortListener{port: ports[len(created)]}
+		created = append(created, item)
+		return item, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := listenerPort(listener); got != 49152 {
+		t.Fatalf("chosen port = %d, want 49152", got)
+	}
+	for i := range 3 {
+		if !created[i].closed {
+			t.Fatalf("unsafe port %d was left open", created[i].port)
+		}
+	}
+	if created[3].closed {
+		t.Fatal("chosen safe listener was closed")
+	}
+	if !isBrowserRestrictedPort(4045) || isBrowserRestrictedPort(49152) {
+		t.Fatal("restricted port classification mismatch")
+	}
 }

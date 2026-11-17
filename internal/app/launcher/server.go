@@ -138,7 +138,7 @@ func Start(parent context.Context, assets fs.FS, options Options) (*Server, erro
 	if metadata, err := fs.Stat(assets, launcherIndex); err != nil || !metadata.Mode().IsRegular() {
 		return nil, errors.New("App launcher assets are unavailable")
 	}
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	listener, err := listenSafeLoopback()
 	if err != nil {
 		return nil, fmt.Errorf("App launcher could not start: %w", err)
 	}
@@ -660,6 +660,72 @@ func decodeSelection(reader io.Reader) (Selection, error) {
 func validTarget(raw string) bool {
 	parsed, err := url.Parse(raw)
 	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
+}
+
+// listenSafeLoopback binds 127.0.0.1 on an ephemeral port that browsers do not
+// block with ERR_UNSAFE_PORT (e.g. 4045/lockd when Windows assigns low dynamic
+// ports).
+func listenSafeLoopback() (net.Listener, error) {
+	return listenSafeLoopbackWith(func(address string) (net.Listener, error) {
+		return net.Listen("tcp4", address)
+	})
+}
+
+func listenSafeLoopbackWith(listen func(string) (net.Listener, error)) (net.Listener, error) {
+	var rejected []net.Listener
+	defer func() {
+		for _, item := range rejected {
+			_ = item.Close()
+		}
+	}()
+	const maxEphemeralAttempts = 64
+	for range maxEphemeralAttempts {
+		listener, err := listen("127.0.0.1:0")
+		if err != nil {
+			return nil, err
+		}
+		if port := listenerPort(listener); port > 0 && !isBrowserRestrictedPort(port) {
+			return listener, nil
+		}
+		// Hold unsafe ports until a safe port is bound so the OS allocator moves on.
+		rejected = append(rejected, listener)
+	}
+	var lastErr error
+	for port := 49152; port <= 49252; port++ {
+		if isBrowserRestrictedPort(port) {
+			continue
+		}
+		listener, err := listen(fmt.Sprintf("127.0.0.1:%d", port))
+		if err == nil {
+			return listener, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, errors.New("no browser-safe loopback port available")
+}
+
+func listenerPort(listener net.Listener) int {
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		return 0
+	}
+	return addr.Port
+}
+
+// isBrowserRestrictedPort matches Chromium / WHATWG Fetch bad ports (net/base/port_util.cc).
+func isBrowserRestrictedPort(port int) bool {
+	if port < 1024 || port > 65535 {
+		return true
+	}
+	switch port {
+	case 1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566,
+		6665, 6666, 6667, 6668, 6669, 6697, 10080:
+		return true
+	}
+	return false
 }
 
 func writeJSON(response http.ResponseWriter, status int, value any) {
